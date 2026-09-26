@@ -4,6 +4,7 @@ import type { ActionType, ActiveAction, Agent, Item, ItemKind, Vec2, WorldState 
 import { blocked, clampToBounds, dist, obstacleDistance } from './geometry';
 import { nearStructure, senseRadius } from './environment';
 import { hearersOf, recordUtterance } from './communication';
+import { clearSegment, findPath } from './pathing';
 import { biomeAt, logEvent, milestone, newId, type Rng, track, traitMods } from './world';
 import { BIOMES } from '../shared/catalog';
 
@@ -80,18 +81,35 @@ export function speedAt(state: WorldState, a: Agent): number {
   return s;
 }
 
-/** Steps toward agent.target. Returns 'arrived' | 'blocked' | 'moving'. */
+/**
+ * Steps toward agent.target, following A* waypoints around solid obstacles when the straight line is blocked,
+ * with local side-steps for other agents. Returns 'arrived' | 'blocked' | 'moving'.
+ */
 export function stepToward(state: WorldState, a: Agent, dt: number, stopWithin = 0.05): 'arrived' | 'blocked' | 'moving' {
   if (!a.target) return 'arrived';
-  const dx = a.target.x - a.position.x;
-  const dz = a.target.z - a.position.z;
-  const d = Math.hypot(dx, dz);
+  const d = dist(a.position, a.target);
   if (d <= stopWithin) {
     a.target = null;
+    a.path = null;
     a.sprinting = false;
     return 'arrived';
   }
-  const step = Math.min(speedAt(state, a) * dt, d);
+  // Plan a route if needed (target changed, no path, or path end no longer matches target).
+  const end = a.path?.at(-1);
+  if (!a.path || !end || dist(end, a.target) > 1.5) {
+    a.path = clearSegment(state, a.position, a.target) ? [{ ...a.target }] : findPath(state, a.position, a.target);
+    if (!a.path) {
+      a.target = null;
+      a.sprinting = false;
+      return 'blocked';
+    }
+  }
+  while (a.path.length > 1 && dist(a.position, a.path[0]) < 0.4) a.path.shift();
+  const way = a.path[0];
+  const dx = way.x - a.position.x;
+  const dz = way.z - a.position.z;
+  const wd = Math.hypot(dx, dz);
+  const step = Math.min(speedAt(state, a) * dt, Math.max(wd, 0.001), d);
   const base = Math.atan2(dz, dx);
   let moved = false;
   for (const off of [0, ...SIDESTEP]) {
@@ -107,8 +125,10 @@ export function stepToward(state: WorldState, a: Agent, dt: number, stopWithin =
     break;
   }
   if (!moved) a.stuckFor += dt;
-  if (a.stuckFor >= 2) {
+  if (a.stuckFor >= 1 && a.stuckFor - dt < 1) a.path = null; // re-plan once before giving up
+  if (a.stuckFor >= 3) {
     a.target = null;
+    a.path = null;
     a.stuckFor = 0;
     a.sprinting = false;
     return 'blocked';

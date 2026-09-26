@@ -188,6 +188,8 @@ export type Agent = {
   sickUntil: number;
   status: AgentStatus;
   target: Vec2 | null;
+  /** Waypoints toward target (sim-internal pathfinding around obstacles). */
+  path: Vec2[] | null;
   sprinting: boolean;
   items: Item[];
   capacity: number;

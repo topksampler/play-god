@@ -160,6 +160,33 @@ describe('movement and hazards', () => {
     expect(s.agents.a1.position.x).toBeLessThan(3 - 0.9);
   });
 
+  it('pathfinding routes around a long wall and a lake instead of getting stuck', () => {
+    const s = blank();
+    s.obstacles.w = { id: 'w', shape: 'cliff', position: { x: 4, z: 0 }, radius: 0.9, halfLength: 9, angle: Math.PI / 2, height: 4, solid: true };
+    s.obstacles.l = { id: 'l', shape: 'lake', position: { x: 12, z: 6 }, radius: 4, height: 0.05, solid: true };
+    plan(s, 'a1', [{ type: 'move', target: { x: 12, z: 0 } }]);
+    run(s, 20);
+    expect(Math.hypot(s.agents.a1.position.x - 12, s.agents.a1.position.z)).toBeLessThan(0.5);
+    expect(s.agents.a1.recentOutcomes.some((o) => o.detail.startsWith('blocked'))).toBe(false);
+  });
+
+  it('pathfinding escapes when the agent stands hard against an obstacle or the edge', async () => {
+    const { findPath } = await import('./pathing');
+    const s = blank();
+    s.obstacles.b = { id: 'b', shape: 'boulder', position: { x: 38, z: 0 }, radius: 1.2, height: 2, solid: true };
+    const path = findPath(s, { x: 39.5, z: -1.6 }, { x: 0, z: 0 });
+    expect(path).not.toBeNull();
+  });
+
+  it('pathfinding cost stays bounded (full-map path under 25ms)', async () => {
+    const { findPath } = await import('./pathing');
+    const s = createInitialWorld('r', 'scripted', { seed: 11 });
+    const t0 = performance.now();
+    findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 });
+    findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 });
+    expect((performance.now() - t0) / 2).toBeLessThan(25);
+  });
+
   it('hazards damage agents inside them and trigger a re-decision', () => {
     const s = blank();
     s.hazards.h = { id: 'h', kind: 'thorns', position: { x: 0, z: 0 }, radius: 3 };

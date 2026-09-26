@@ -83,6 +83,7 @@ export function createAgent(state: WorldState, position: Vec2, controller: Contr
     sickUntil: 0,
     status: 'active',
     target: null,
+    path: null,
     sprinting: false,
     items: [],
     capacity: CONFIG.baseCapacity + mods.extraCapacity,
