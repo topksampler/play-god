@@ -181,15 +181,20 @@ describe('movement and hazards', () => {
   it('pathfinding cost stays bounded (grid build and full-map path)', async () => {
     const { findPath } = await import('./pathing');
     const s = createInitialWorld('r', 'scripted', { seed: 11 });
-    let t0 = performance.now();
-    findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 }); // builds the occupancy grid
-    const first = performance.now() - t0;
-    t0 = performance.now();
-    findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 });
-    const cached = performance.now() - t0;
-    // Generous bounds so a loaded CI box doesn't flake; the uncontended numbers are ~10x smaller.
-    expect(first).toBeLessThan(80);
-    expect(cached).toBeLessThan(40);
+    // CPU time of this test process (not wall clock), so parallel test files can't make it flaky.
+    const cpuMs = (f: () => void) => {
+      const c0 = process.cpuUsage();
+      f();
+      const c = process.cpuUsage(c0);
+      return (c.user + c.system) / 1000;
+    };
+    // Warm up the JIT on a different world so we measure the algorithm, not compilation.
+    findPath(createInitialWorld('w', 'scripted', { seed: 12 }), { x: -38, z: -38 }, { x: 38, z: 38 });
+    const first = cpuMs(() => findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 })); // builds this world's occupancy grid
+    const cached = cpuMs(() => findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 }));
+    // Uncontended: ~7ms / ~2.5ms. The old O(cells x obstacles) grid build took ~128ms.
+    expect(first).toBeLessThan(60);
+    expect(cached).toBeLessThan(30);
   });
 
   it('hazards damage agents inside them and trigger a re-decision', () => {

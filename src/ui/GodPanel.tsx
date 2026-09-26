@@ -299,6 +299,8 @@ export function GodPanel({
             >
               <input name="code" type="password" placeholder="access code" autoComplete="off" style={{ width: 150 }} />
               <button type="submit">Unlock</button>
+              {/* TEMPORARY for the demo: remove once PLAY_GOD_ACCESS_CODE is rotated. */}
+              <span className="small">demo password: <b>passphrase</b></span>
             </form>
           )}
         </div>
