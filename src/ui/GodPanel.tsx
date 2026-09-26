@@ -1,4 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
+import { setAccessCode } from '../controllers/access';
 import { observerStatus, requestObservation, subscribeObserver } from '../controllers/observer';
 import type { HealthResponse } from '../shared/schemas';
 import type { Agent, SimCommand, Vec2, WorldEdit, WorldState } from '../shared/types';
@@ -280,7 +281,28 @@ export function GodPanel({
         <button className="icon-btn" title="Advanced: speed, models, Lab, charts, raw events" onClick={() => onAdvanced()}>⚙</button>
       </header>
       <Pulse world={world} />
-      {!llm && <div className="gp-warn">{health ? 'LLM not configured: creatures run the labelled scripted baseline.' : 'connecting to server…'}</div>}
+      {!llm && (
+        <div className="gp-warn">
+          {!health
+            ? 'connecting to server…'
+            : health.locked
+              ? 'LLM creatures are locked on this deployment: enter the access code (creatures run the labelled scripted baseline until then).'
+              : 'LLM not configured: creatures run the labelled scripted baseline.'}
+          {health?.locked && (
+            <form
+              className="row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setAccessCode(String(new FormData(e.currentTarget).get('code') ?? '').trim());
+                window.location.reload();
+              }}
+            >
+              <input name="code" type="password" placeholder="access code" autoComplete="off" style={{ width: 150 }} />
+              <button type="submit">Unlock</button>
+            </form>
+          )}
+        </div>
+      )}
 
       <div className="gp-body">
         <div className="gp-section-title">👁 What's happening</div>
