@@ -9,6 +9,7 @@ import { dist } from '../sim/geometry';
 import { useSim, useWorldThrottled } from '../sim/react';
 import { GroundItemMesh, HazardMesh, ObstacleMesh, StructureMesh } from './Entities';
 import { ResourceMesh } from './Resources';
+import { CommsLayer } from './Comms';
 import { Label } from './Label';
 import { Terrain } from './Terrain';
 
@@ -26,6 +27,11 @@ function AgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: bool
     g.position.x += (a.position.x - g.position.x) * k;
     g.position.z += (a.position.z - g.position.z) * k;
     g.rotation.y = -a.heading + Math.PI / 2;
+    const ge = a.gesture && a.gesture.until > store.getState().time ? a.gesture.kind : null;
+    const t = performance.now() / 1000;
+    g.position.y = ge === 'jump' ? Math.abs(Math.sin(t * 7)) * 0.6 : 0;
+    g.scale.y = ge === 'crouch' ? 0.6 : 1;
+    g.rotation.z = ge === 'wave' || ge === 'beckon' ? Math.sin(t * 9) * 0.18 : 0;
   });
   const dead = agent.status === 'dead';
   const resting = agent.status === 'resting';
@@ -106,7 +112,7 @@ function Sky() {
     // Storm lightning: brief random flashes.
     const flash = s.weather === 'storm' && Math.random() < 0.004 ? 2.5 : 0;
     if (flash && scene.background instanceof Color) scene.background.set('#dfe7ff');
-    if (hemi.current) hemi.current.intensity = 0.15 + 0.75 * l * wx + flash;
+    if (hemi.current) hemi.current.intensity = 0.32 + 0.6 * l * wx + flash;
     if (sun.current) {
       sun.current.intensity = 0.1 + 1.6 * l * wx;
       const ang = (s.time / CONFIG.dayLengthSec) * Math.PI * 2;
@@ -223,6 +229,7 @@ function World({ selectedId, onSelect }: { selectedId: string | null; onSelect: 
           <meshBasicMaterial color={selected.color} transparent opacity={0.6} depthWrite={false} />
         </mesh>
       )}
+      <CommsLayer world={world} />
       {Object.values(world.agents).map((a) => (
         <AgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />
       ))}

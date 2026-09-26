@@ -7,13 +7,16 @@ export function Label({
   position,
   bg = 'rgba(20,24,32,0.78)',
   outline,
+  dark,
 }: {
   lines: string[];
   position: [number, number, number];
   bg?: string;
   outline?: string;
+  /** Dark text (for light bubbles). */
+  dark?: boolean;
 }) {
-  const key = lines.join('\n') + bg + outline;
+  const key = lines.join('\n') + bg + outline + dark;
   const { texture, aspect } = useMemo(() => {
     const scale = 2;
     const font = `${13 * scale}px system-ui, sans-serif`;
@@ -36,7 +39,7 @@ export function Label({
       ctx.stroke();
     }
     ctx.font = font;
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = dark ? '#0b0b0b' : '#fff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     lines.forEach((l, i) => ctx.fillText(l, w / 2, pad / 2 + lh * (i + 0.5)));

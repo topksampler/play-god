@@ -7,6 +7,7 @@ import { useSim, useWorldThrottled } from '../sim/react';
 import { Sparkline } from './charts/Sparkline';
 import { Dossier, type DossierTab } from './Dossier';
 import { EventFeed } from './EventFeed';
+import { Lab } from './Lab';
 
 const f0 = (n: number) => n.toFixed(0);
 const f1 = (n: number) => n.toFixed(1);
@@ -37,7 +38,7 @@ export function Panel({
 }) {
   const store = useSim();
   const world = useWorldThrottled(400);
-  const [view, setView] = useState<'world' | 'agent'>('agent');
+  const [view, setView] = useState<'world' | 'agent' | 'lab'>('agent');
   const agents = Object.values(world.agents);
   const count = agents.length;
   const agent = selectedId ? world.agents[selectedId] : undefined;
@@ -97,11 +98,13 @@ export function Panel({
           ))}
           <span className="spacer" />
           <button className={`chip-btn ${view === 'world' ? 'on' : ''}`} onClick={() => setView('world')}>🌍 World</button>
+          <button className={`chip-btn ${view === 'lab' ? 'on' : ''}`} onClick={() => setView('lab')}>🧪 Lab</button>
         </div>
       </div>
 
       <div className="panel-body">
-        {!showAgent && (
+        {view === 'lab' && <Lab world={world} />}
+        {view === 'world' && (
           <>
             <div className="small">
               {world.runId} · seed {world.seed} · {timeOfDay(world.time)} · {world.weather} · t={f0(world.time)}s

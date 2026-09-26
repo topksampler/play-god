@@ -5,6 +5,19 @@ import { bearing, dist } from './geometry';
 import { senseRadius, timeOfDay } from './environment';
 import { biomeAt } from './world';
 
+/** Each agent sees the sound inventory in its own fixed shuffled order, so list position carries no shared meaning. */
+function soundsFor(lexicon: string[], agentId: string) {
+  let h = 2166136261;
+  for (let i = 0; i < agentId.length; i++) h = Math.imul(h ^ agentId.charCodeAt(i), 16777619);
+  const out = [...lexicon];
+  for (let i = out.length - 1; i > 0; i--) {
+    h = Math.imul(h ^ (h >>> 13), 2246822507) >>> 0;
+    const j = h % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const pos = (p: Vec2) => ({ x: r1(p.x), z: r1(p.z) });
 
@@ -51,6 +64,11 @@ export function observe(state: WorldState, agentId: string): Observation {
       senseRadius: r1(radius),
       currentAction: self.current?.action.type ?? null,
       planRemaining: self.plan.length,
+      traits: self.traits,
+      voice: {
+        mode: state.experiment.commMode,
+        sounds: state.experiment.commMode === 'silent' ? [] : soundsFor(state.experiment.lexicon, self.id),
+      },
     },
     bounds: state.bounds,
     visibleResources: nearest(Object.values(state.resources), CONFIG.observeMaxResources).map((r) => ({
@@ -77,7 +95,20 @@ export function observe(state: WorldState, agentId: string): Observation {
     visibleAgents: nearest(
       Object.values(state.agents).filter((a) => a.id !== self.id),
       CONFIG.observeMaxOther,
-    ).map((a) => ({ id: a.id, position: pos(a.position), distance: r1(d(a.position)), status: a.status })),
+    ).map((a) => {
+      const doing = a.lastVisibleAct && a.lastVisibleAct.until > state.time ? a.lastVisibleAct.text
+        : a.status === 'resting' ? 'resting' : a.current?.action.type === 'move' || a.current?.action.type === 'follow' ? 'walking' : undefined;
+      const g = a.gesture && a.gesture.until > state.time ? a.gesture : null;
+      return {
+        id: a.id, position: pos(a.position), distance: r1(d(a.position)), status: a.status,
+        ...(doing ? { doing } : {}),
+        ...(a.items.length ? { holding: a.items.slice(0, 4).map((i) => i.label) } : {}),
+        ...(g ? { gesture: { kind: g.kind, ...(g.toward ? { toward: bearing(a.position, g.toward) } : {}) } } : {}),
+      };
+    }),
+    visibleMarks: nearest(Object.values(state.marks), CONFIG.observeMaxOther).map((m) => ({
+      id: m.id, glyph: m.glyph, position: pos(m.position), distance: r1(d(m.position)), ageSec: Math.round(state.time - m.at),
+    })),
     visibleStructures: nearest(Object.values(state.structures), CONFIG.observeMaxOther).map((s) => ({
       id: s.id,
       kind: s.kind,

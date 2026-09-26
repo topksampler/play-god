@@ -23,6 +23,30 @@ export type ObstacleShape = 'rock' | 'boulder' | 'tree' | 'log' | 'cliff' | 'bus
 export type StructureKind = 'campfire' | 'shelter' | 'cache' | 'sign';
 export type RecipeKind = 'basket' | 'torch';
 
+/** Experimental conditions for a run. */
+export type CommMode = 'english' | 'proto' | 'silent';
+export type Trait = 'keen_eyes' | 'strong' | 'swift' | 'hardy';
+export type GestureKind = 'point' | 'beckon' | 'wave' | 'jump' | 'crouch';
+export type ExperimentConfig = {
+  commMode: CommMode;
+  /** Heterogeneous agents: each gets one random trait. */
+  traits: boolean;
+  /** Proto-language sound inventory, generated per run (meaningless tokens). */
+  lexicon: string[];
+};
+
+/** Every communicative act, stored with the sender's actual situation (truth) for emergence analysis. */
+export type Utterance = {
+  id: string;
+  at: number;
+  speaker: string;
+  channel: 'speech' | 'signal' | 'gesture' | 'mark';
+  content: string;
+  hearers: string[];
+  context: string[];
+  where: Vec2;
+};
+
 export type Action =
   | { type: 'move'; target: Vec2; sprint?: boolean }
   | { type: 'follow'; agentId: string }
@@ -35,6 +59,9 @@ export type Action =
   | { type: 'rest' }
   | { type: 'inspect'; targetId: string }
   | { type: 'say'; text: string }
+  | { type: 'signal'; tokens: string[] }
+  | { type: 'gesture'; gesture: GestureKind; toward?: Vec2 }
+  | { type: 'mark'; glyph: string }
   | { type: 'craft'; recipe: RecipeKind }
   | { type: 'build'; structure: StructureKind; text?: string }
   | { type: 'cook'; itemId: string }
@@ -79,12 +106,21 @@ export type Observation = {
     senseRadius: number;
     currentAction: ActionType | null;
     planRemaining: number;
+    traits: Trait[];
+    /** How this agent can communicate this run. `sounds` is its own (shuffled) view of the sound inventory. */
+    voice: { mode: CommMode; sounds: string[] };
   };
   bounds: { min: Vec2; max: Vec2 };
   visibleResources: { id: string; appearance: string; position: Vec2; distance: number; bearing: string; units: number }[];
   visibleHazards: { id: string; appearance: string; position: Vec2; radius: number; distance: number }[];
   visibleObstacles: { id: string; kind: ObstacleShape; position: Vec2; radius: number }[];
-  visibleAgents: { id: string; position: Vec2; distance: number; status: AgentStatus }[];
+  visibleAgents: {
+    id: string; position: Vec2; distance: number; status: AgentStatus;
+    /** What you can see them doing / holding right now (observable behaviour). */
+    doing?: string; holding?: string[];
+    gesture?: { kind: GestureKind; toward?: string };
+  }[];
+  visibleMarks: { id: string; glyph: string; position: Vec2; distance: number; ageSec: number }[];
   visibleStructures: {
     id: string; kind: StructureKind; position: Vec2; distance: number; text?: string; lit?: boolean;
     /** Cache contents, visible only when standing near the cache. */
@@ -123,7 +159,7 @@ export type Item = { id: string; kind: ItemKind; label: string; spoilsAt: number
 /** The action currently executing (possibly still approaching its target). */
 /** Per-agent history, recorded by the simulator (truth), grouped by decision turn. */
 export type TimelineKind = 'turn' | 'action' | 'said' | 'heard' | 'memory' | 'milestone' | 'hurt' | 'error';
-export type TimelineEntry = { seq: number; at: number; turn: number; kind: TimelineKind; ok: boolean; text: string };
+export type TimelineEntry = { seq: number; at: number; turn: number; kind: TimelineKind; ok: boolean; text: string; plan?: Action[] };
 
 /** Periodic samples for growth charts. */
 export type GrowthSample = {
@@ -166,6 +202,15 @@ export type Agent = {
   /** Seconds spent unable to make progress toward target. */
   stuckFor: number;
   bornAt: number;
+  traits: Trait[];
+  /** Starting endowment, recorded at spawn for baseline comparisons. */
+  baseline: {
+    traits: Trait[]; capacity: number; senseMul: number; speedMul: number; poisonResist: number;
+    controller: ControllerKind; tier: AgentTier; commMode: CommMode; energy: number; hydration: number;
+  };
+  gesture: { kind: GestureKind; toward?: Vec2; until: number } | null;
+  /** Last completed action, visible to others briefly ("eating dark blue berries"). */
+  lastVisibleAct: { text: string; until: number } | null;
   turn: number;
   timeline: TimelineEntry[];
   growth: GrowthSample[];
@@ -218,6 +263,9 @@ export type Structure = {
   litUntil?: number;
 };
 
+export type Mark = { id: string; glyph: string; position: Vec2; by: string; at: number; expiresAt: number };
+export type Delivery = { at: number; from: string; to: string[]; channel: Utterance['channel'] };
+
 export type GroundItem = { id: string; item: Item; position: Vec2; droppedBy: string };
 export type Biome = { id: string; kind: BiomeKind; site: Vec2 };
 
@@ -249,6 +297,11 @@ export type WorldState = {
   obstacles: Record<string, Obstacle>;
   structures: Record<string, Structure>;
   groundItems: Record<string, GroundItem>;
+  marks: Record<string, Mark>;
+  experiment: ExperimentConfig;
+  utterances: Utterance[];
+  /** Recent actual deliveries, for rendering comm lines. */
+  deliveries: Delivery[];
   events: SimEvent[];
   eventSeq: number;
   history: WorldSample[];
@@ -270,7 +323,7 @@ export type WorldEdit =
 export type SimCommand =
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'reset'; seed?: number }
+  | { type: 'reset'; seed?: number; experiment?: Partial<Omit<ExperimentConfig, 'lexicon'>> }
   | { type: 'spawnAgents'; count: number; controller: ControllerKind; tier?: AgentTier }
   | { type: 'setController'; agentId: string; controller: ControllerKind; tier?: AgentTier }
   | { type: 'setDefaultController'; controller: ControllerKind; tier?: AgentTier }

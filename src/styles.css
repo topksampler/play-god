@@ -94,3 +94,13 @@ button:disabled { opacity: 0.4; cursor: default; }
 .wtl-name { font-size: 11px; fill: var(--text-primary); }
 .wtl-tip { position: absolute; transform: translateX(-50%); background: #1f2330; color: #fff; font-size: 11.5px; padding: 6px 9px; border-radius: 6px; max-width: 360px; pointer-events: none; z-index: 5; }
 .wtl-tip .small { color: #b8bcc8; }
+
+.seed { width: 70px; font: inherit; font-size: 12px; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; }
+.matrix-wrap { overflow-x: auto; }
+.matrix { border-collapse: separate; border-spacing: 2px; font-size: 11px; }
+.matrix th { font-weight: 500; color: var(--text-secondary); vertical-align: bottom; height: 86px; }
+.matrix th span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+.matrix td { padding: 2px 4px; text-align: center; min-width: 20px; background: var(--surface-2); border-radius: 3px; font-variant-numeric: tabular-nums; }
+.matrix td.sym { text-align: left; font-family: ui-monospace, monospace; background: none; font-weight: 600; }
+.matrix td.num { background: none; color: var(--text-secondary); }
+.matrix td.hot { color: #fff; font-weight: 600; }

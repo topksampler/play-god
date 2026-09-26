@@ -1,7 +1,7 @@
 import { BIOMES, NODES } from '../shared/catalog';
 import { AGENT_COLORS, CONFIG } from '../shared/config';
 import type {
-  TimelineEntry, Agent, AgentMemory, AgentTier, Biome, BiomeKind, ControllerKind, NodeKind, Obstacle, ObstacleShape, SimEvent, Vec2, WorldState,
+  ExperimentConfig, Trait, TimelineEntry, Agent, AgentMemory, AgentTier, Biome, BiomeKind, ControllerKind, NodeKind, Obstacle, ObstacleShape, SimEvent, Vec2, WorldState,
 } from '../shared/types';
 import { blocked, dist, obstacleDistance } from './geometry';
 import { mulberry32, type Rng } from './rng';
@@ -33,11 +33,40 @@ export function biomeAt(state: WorldState, p: Vec2): BiomeKind {
   return best?.kind ?? 'meadow';
 }
 
+const CONS = ['k', 't', 'm', 'n', 'r', 's', 'v', 'z', 'p', 'l', 'g', 'd'];
+const VOWS = ['a', 'e', 'i', 'o', 'u'];
+/** Two-syllable nonsense tokens (CVCV), avoiding a few accidental English words. */
+export function makeLexicon(rng: Rng, n = CONFIG.lexiconSize): string[] {
+  const banned = new Set(['mama', 'papa', 'nono', 'soso', 'tutu', 'lola', 'gogo', 'dodo', 'mimi', 'nana', 'kiki', 'lulu']);
+  const out = new Set<string>();
+  while (out.size < n) {
+    const w = CONS[Math.floor(rng() * CONS.length)] + VOWS[Math.floor(rng() * 5)] + CONS[Math.floor(rng() * CONS.length)] + VOWS[Math.floor(rng() * 5)];
+    if (!banned.has(w)) out.add(w);
+  }
+  return [...out];
+}
+
+export const TRAITS: Record<Trait, { label: string; effect: string }> = {
+  keen_eyes: { label: 'keen eyes', effect: 'sees 35% further' },
+  strong: { label: 'strong', effect: 'carries 3 more items' },
+  swift: { label: 'swift', effect: 'moves 25% faster' },
+  hardy: { label: 'hardy', effect: 'poison and sickness hit half as hard' },
+};
+export const traitMods = (traits: Trait[]) => ({
+  senseMul: traits.includes('keen_eyes') ? 1.35 : 1,
+  speedMul: traits.includes('swift') ? 1.25 : 1,
+  extraCapacity: traits.includes('strong') ? 3 : 0,
+  poisonResist: traits.includes('hardy') ? 0.5 : 1,
+});
+
 export const emptyMemory = (): AgentMemory => ({ notes: '', places: [], beliefs: [] });
 
-export function createAgent(state: WorldState, position: Vec2, controller: ControllerKind, tier: AgentTier): Agent {
+export function createAgent(state: WorldState, position: Vec2, controller: ControllerKind, tier: AgentTier, rng: Rng = Math.random): Agent {
   const index = Object.keys(state.agents).length;
   const id = newId(state, 'a');
+  const all = Object.keys(TRAITS) as Trait[];
+  const traits: Trait[] = state.experiment.traits ? [all[(index + Math.floor(rng() * all.length)) % all.length]] : [];
+  const mods = traitMods(traits);
   return {
     id,
     color: AGENT_COLORS[index % AGENT_COLORS.length],
@@ -53,7 +82,7 @@ export function createAgent(state: WorldState, position: Vec2, controller: Contr
     target: null,
     sprinting: false,
     items: [],
-    capacity: CONFIG.baseCapacity,
+    capacity: CONFIG.baseCapacity + mods.extraCapacity,
     hasTorch: false,
     plan: [],
     current: null,
@@ -80,6 +109,13 @@ export function createAgent(state: WorldState, position: Vec2, controller: Contr
     lastDamageAt: -Infinity,
     stuckFor: 0,
     bornAt: state.time,
+    traits,
+    baseline: {
+      traits, capacity: CONFIG.baseCapacity + mods.extraCapacity, senseMul: mods.senseMul, speedMul: mods.speedMul,
+      poisonResist: mods.poisonResist, controller, tier, commMode: state.experiment.commMode, energy: 80, hydration: 80,
+    },
+    gesture: null,
+    lastVisibleAct: null,
     turn: 0,
     timeline: [],
     growth: [],
@@ -93,9 +129,9 @@ export function createAgent(state: WorldState, position: Vec2, controller: Contr
 }
 
 /** Append to an agent's timeline (bounded). */
-export function track(state: WorldState, a: Agent, kind: TimelineEntry['kind'], text: string, ok = true) {
+export function track(state: WorldState, a: Agent, kind: TimelineEntry['kind'], text: string, ok = true, plan?: TimelineEntry['plan']) {
   state.eventSeq += 1;
-  a.timeline.push({ seq: state.eventSeq, at: state.time, turn: a.turn, kind, ok, text });
+  a.timeline.push({ seq: state.eventSeq, at: state.time, turn: a.turn, kind, ok, text, ...(plan ? { plan } : {}) });
   if (a.timeline.length > CONFIG.timelineMax) a.timeline.splice(0, a.timeline.length - CONFIG.timelineMax);
 }
 
@@ -149,7 +185,7 @@ export function spawnAgents(state: WorldState, count: number, controller: Contro
       logEvent(state, { kind: 'spawn', ok: false, text: 'Spawn rejected: no free spot found' });
       break;
     }
-    const agent = createAgent(state, p, controller, tier);
+    const agent = createAgent(state, p, controller, tier, rng);
     state.agents[agent.id] = agent;
     spawned.push(agent.id);
     logEvent(state, { kind: 'spawn', agentId: agent.id, ok: true, text: `Spawned ${agent.id} (${controller}${controller === 'llm' ? `/${tier}` : ''})` });
@@ -260,10 +296,11 @@ function generate(state: WorldState, rng: Rng) {
 export function createInitialWorld(
   runId: string,
   defaultController: ControllerKind,
-  opts: { seed?: number; defaultTier?: AgentTier } = {},
+  opts: { seed?: number; defaultTier?: AgentTier; experiment?: Partial<Omit<ExperimentConfig, 'lexicon'>> } = {},
 ): WorldState {
   const seed = opts.seed ?? CONFIG.defaultSeed;
   const rng = mulberry32(seed);
+  const lexicon = makeLexicon(mulberry32(seed ^ 0x5eed));
   const h = CONFIG.worldSize / 2;
   const state: WorldState = {
     runId,
@@ -283,6 +320,10 @@ export function createInitialWorld(
     obstacles: {},
     structures: {},
     groundItems: {},
+    marks: {},
+    experiment: { commMode: opts.experiment?.commMode ?? 'english', traits: opts.experiment?.traits ?? false, lexicon },
+    utterances: [],
+    deliveries: [],
     events: [],
     eventSeq: 0,
     history: [],
@@ -299,9 +340,9 @@ export function createInitialWorld(
     (bush && sampleFreeSpot(state, rng, { near: bush.position, within: 3 })) ||
     sampleFreeSpot(state, rng, { near: meadow.site, within: 6 }) ||
     { x: 0, z: 0 };
-  const first = createAgent(state, start, defaultController, state.defaultTier);
+  const first = createAgent(state, start, defaultController, state.defaultTier, rng);
   state.agents[first.id] = first;
-  logEvent(state, { kind: 'system', ok: true, text: `Run ${runId} started (seed ${seed})` });
+  logEvent(state, { kind: 'system', ok: true, text: `Run ${runId} started (seed ${seed}, comm ${state.experiment.commMode}${state.experiment.traits ? ', traits on' : ''})` });
   logEvent(state, { kind: 'spawn', agentId: first.id, ok: true, text: `Spawned ${first.id} (${defaultController})` });
   return state;
 }

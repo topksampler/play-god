@@ -1,6 +1,6 @@
 import { BIOMES, HAZARDS, ITEMS } from '../shared/catalog';
 import { CONFIG } from '../shared/config';
-import type { Agent, AgentMemory, Decision, SimCommand, Weather, WorldEdit, WorldState } from '../shared/types';
+import type { Agent, AgentMemory, Decision, SimCommand, Vec2, Weather, WorldEdit, WorldState } from '../shared/types';
 import { interrupt, recordOutcome, runAction } from './actions';
 import { nearStructure, senseRadius } from './environment';
 import { blocked, clampToBounds, dist } from './geometry';
@@ -24,8 +24,12 @@ function sanitizeMemory(m: AgentMemory): AgentMemory {
 
 const describeAction = (a: Decision['plan'][number]) => {
   const { type, ...rest } = a as Record<string, unknown>;
-  const v = Object.values(rest)[0];
-  return v && typeof v === 'object' ? `${type}(${(v as { x: number }).x.toFixed(0)},${(v as { z: number }).z.toFixed(0)})` : v ? `${type} ${v}` : String(type);
+  const parts = Object.values(rest).map((v) =>
+    Array.isArray(v) ? `"${v.join(' ')}"`
+      : v && typeof v === 'object' && 'x' in v ? `(${(v as unknown as Vec2).x.toFixed(0)},${(v as unknown as Vec2).z.toFixed(0)})`
+      : String(v),
+  );
+  return parts.length ? `${type} ${parts.join(' ')}` : String(type);
 };
 
 /** Record what changed in the agent's self-authored memory (beliefs, places) on its timeline. */
@@ -48,6 +52,8 @@ function applyDecision(state: WorldState, agent: Agent, decision: Decision) {
   track(
     state, agent, 'turn',
     `Turn ${agent.turn} · because ${agent.controller.interruptReason ?? 'scheduled'} → ${decision.plan.map(describeAction).join(' → ')}${decision.intent ? ` · intent: ${decision.intent}` : ''}`,
+    true,
+    decision.plan,
   );
   if (decision.memory) {
     const next = sanitizeMemory(decision.memory);
@@ -116,7 +122,11 @@ export function applyCommand(state: WorldState, cmd: SimCommand, rng: Rng, nextR
       logEvent(state, { kind: 'system', ok: true, text: 'Resumed' });
       return state;
     case 'reset':
-      return createInitialWorld(nextRunId(), state.defaultController, { seed: cmd.seed ?? state.seed, defaultTier: state.defaultTier });
+      return createInitialWorld(nextRunId(), state.defaultController, {
+        seed: cmd.seed ?? state.seed,
+        defaultTier: state.defaultTier,
+        experiment: { commMode: state.experiment.commMode, traits: state.experiment.traits, ...cmd.experiment },
+      });
     case 'spawnAgents':
       spawnAgents(state, cmd.count, cmd.controller, cmd.tier ?? state.defaultTier, rng);
       return state;
@@ -393,7 +403,10 @@ export function stepWorld(state: WorldState, dt: number, rng: Rng = Math.random)
     sample(state);
   }
   stepEcology(state, dt, rng);
+  for (const m of Object.values(state.marks)) if (m.expiresAt <= state.time) delete state.marks[m.id];
+  if (state.deliveries.length && state.time - state.deliveries[0].at > 3) state.deliveries.shift();
   for (const a of Object.values(state.agents)) {
+    if (a.gesture && a.gesture.until <= state.time) a.gesture = null;
     if (a.status === 'dead') continue;
     stepPlan(state, a, dt, rng);
     stepBody(state, a, dt, rng);

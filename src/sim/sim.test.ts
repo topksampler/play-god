@@ -262,6 +262,91 @@ describe('plans, isolation, staleness, messaging', () => {
   });
 });
 
+describe('emergent communication conditions', () => {
+  const proto = () => {
+    const s = createInitialWorld('r', 'llm', { experiment: { commMode: 'proto', traits: true } });
+    s.resources = {};
+    s.hazards = {};
+    s.obstacles = {};
+    s.agents.a1.position = { x: 0, z: 0 };
+    s.time = 10;
+    apply(s, { type: 'spawnAgents', count: 1, controller: 'llm' });
+    const b = Object.keys(s.agents)[1];
+    s.agents[b].position = { x: 3, z: 0 };
+    return { s, b };
+  };
+
+  it('proto mode: words fail, only lexicon sounds are delivered, with context recorded', () => {
+    const { s, b } = proto();
+    plan(s, 'a1', [{ type: 'say', text: 'food here' }]);
+    run(s, 0.1);
+    expect(last(s)?.ok).toBe(false);
+    expect(s.agents[b].inbox.length).toBe(0);
+    plan(s, 'a1', [{ type: 'signal', tokens: ['hello'] }]);
+    run(s, 0.1);
+    expect(last(s)?.ok).toBe(false);
+    const [w1, w2] = s.experiment.lexicon;
+    node(s, 'berry_bush', { x: 1, z: 1 });
+    plan(s, 'a1', [{ type: 'signal', tokens: [w1, w2] }]);
+    run(s, 0.1);
+    expect(s.agents[b].inbox.at(-1)?.text).toBe(`${w1} ${w2}`);
+    const u = s.utterances.at(-1)!;
+    expect(u).toMatchObject({ speaker: 'a1', channel: 'signal', hearers: [b] });
+    expect(u.context).toContain('food-near');
+    expect(u.context).toContain('agent-close');
+  });
+
+  it('gestures and marks are perceivable by others; marks expire', () => {
+    const { s, b } = proto();
+    plan(s, 'a1', [{ type: 'gesture', gesture: 'point', toward: { x: 0, z: -10 } }]);
+    run(s, 0.1);
+    const seen = observe(s, b).visibleAgents.find((a) => a.id === 'a1');
+    expect(seen?.gesture).toEqual({ kind: 'point', toward: 'N' });
+    plan(s, 'a1', [{ type: 'mark', glyph: s.experiment.lexicon[0] }]);
+    run(s, 0.1);
+    expect(observe(s, b).visibleMarks.length).toBe(1);
+    plan(s, 'a1', [{ type: 'mark', glyph: 'FOOD' }]);
+    run(s, 0.1);
+    expect(last(s)?.ok).toBe(false);
+    run(s, CONFIG.markTtlSec + 1);
+    expect(Object.keys(s.marks).length).toBe(0);
+  });
+
+  it('others can see what an agent is doing and holding; each agent sees its own sound order', () => {
+    const { s, b } = proto();
+    const r = node(s, 'berry_bush', { x: 1, z: 0 });
+    plan(s, 'a1', [{ type: 'gather', nodeId: r }]);
+    run(s, 0.5);
+    const seen = observe(s, b).visibleAgents.find((a) => a.id === 'a1')!;
+    expect(seen.doing).toMatch(/gathering/);
+    expect(seen.holding).toEqual(['dark blue berries']);
+    const s1 = observe(s, 'a1').self.voice.sounds;
+    const s2 = observe(s, b).self.voice.sounds;
+    expect([...s1].sort()).toEqual([...s2].sort());
+    expect(s1.join()).not.toBe(s2.join());
+  });
+
+  it('traits are applied and recorded in the baseline', () => {
+    const { s } = proto();
+    for (const a of Object.values(s.agents)) {
+      expect(a.traits.length).toBe(1);
+      expect(a.baseline.traits).toEqual(a.traits);
+      if (a.traits[0] === 'strong') expect(a.capacity).toBe(CONFIG.baseCapacity + 3);
+    }
+  });
+
+  it('silent mode blocks sounds but allows gestures', () => {
+    const s = createInitialWorld('r', 'llm', { experiment: { commMode: 'silent' } });
+    plan(s, 'a1', [{ type: 'signal', tokens: [s.experiment.lexicon[0]] }]);
+    run(s, 0.1);
+    expect(last(s)?.ok).toBe(false);
+    plan(s, 'a1', [{ type: 'gesture', gesture: 'wave' }]);
+    run(s, 0.1);
+    expect(last(s)?.ok).toBe(true);
+    expect(observe(s, 'a1').self.voice.sounds).toEqual([]);
+  });
+});
+
 describe('scripted baseline (labelled, not LLM)', () => {
   it('finds, gathers and eats food, and avoids red spotted mushrooms', () => {
     const s = blank();

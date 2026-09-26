@@ -19,8 +19,15 @@ const ts = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).pa
 function Overview({ agent }: { agent: Agent }) {
   const g = agent.growth;
   const s = (k: keyof (typeof g)[number]) => g.map((p) => ({ t: p.t, v: p[k] as number }));
+  const b = agent.baseline;
   return (
     <div>
+      <h3>Baseline (at birth)</h3>
+      <div className="kv">
+        {b.controller}{b.controller === 'llm' ? ` / ${b.tier}` : ''} · comm {b.commMode} · traits {b.traits.join(', ') || 'none'}
+        <br />
+        capacity {b.capacity} · sight ×{b.senseMul} · speed ×{b.speedMul} · poison ×{b.poisonResist} · started energy {b.energy} / water {b.hydration}
+      </div>
       <h3>Body (0–100)</h3>
       <div className="grid2">
         <Sparkline title="Energy" points={s('energy')} color="#eb6834" max={100} />

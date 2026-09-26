@@ -3,10 +3,36 @@ import { CONFIG } from '../shared/config';
 import type { ActionType, ActiveAction, Agent, Item, ItemKind, Vec2, WorldState } from '../shared/types';
 import { blocked, clampToBounds, dist, obstacleDistance } from './geometry';
 import { nearStructure, senseRadius } from './environment';
-import { biomeAt, logEvent, milestone, newId, type Rng, track } from './world';
+import { hearersOf, recordUtterance } from './communication';
+import { biomeAt, logEvent, milestone, newId, type Rng, track, traitMods } from './world';
 import { BIOMES } from '../shared/catalog';
 
 export type ActionStatus = 'done' | 'ongoing' | 'failed';
+
+const bearingOf = (from: Vec2, to: Vec2) => {
+  const ang = Math.atan2(to.z - from.z, to.x - from.x);
+  return ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'][(Math.round(ang / (Math.PI / 4)) + 8) % 8];
+};
+
+/** Local broadcast (speech or proto-language signal) to creatures within comm radius at send time. */
+function deliver(state: WorldState, a: Agent, act: ActiveAction, channel: 'speech' | 'signal', content: string): 'done' {
+  const recipients = hearersOf(state, a);
+  const id = newId(state, 'm');
+  for (const r of recipients) {
+    r.inbox.push({ id, senderId: a.id, text: content, sentAt: state.time });
+    if (r.inbox.length > CONFIG.inboxMax) r.inbox.shift();
+    r.messagesHeard++;
+    track(state, r, 'heard', `${a.id}: ${channel === 'signal' ? `sounds "${content}"` : `"${content}"`}`);
+    interrupt(r, `${channel === 'signal' ? 'sounds' : 'message'} from ${a.id}`);
+  }
+  const to = recipients.map((r) => r.id).join(', ') || 'nobody in range';
+  a.messagesSent++;
+  recordUtterance(state, a, channel, content, recipients);
+  track(state, a, 'said', `${channel === 'signal' ? 'sounds ' : ''}"${content}" → ${to}`, recipients.length > 0);
+  recordOutcome(state, a, act.action.type, true, `${channel === 'signal' ? 'made sounds' : 'said'} "${content}" → ${to}`, false, true);
+  logEvent(state, { kind: 'message', agentId: a.id, ok: recipients.length > 0, text: `${a.id} → ${to}: ${channel === 'signal' ? '🔊 ' : ''}"${content}"` });
+  return 'done';
+}
 
 const FIRSTS: Partial<Record<ActionType, string>> = {
   gather: 'First gather', eat: 'First meal', drink: 'First drink', craft: 'First craft', build: 'First structure built',
@@ -43,7 +69,7 @@ const fmt = (p: Vec2) => `(${p.x.toFixed(1)}, ${p.z.toFixed(1)})`;
 const SIDESTEP = [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, (3 * Math.PI) / 4, (-3 * Math.PI) / 4];
 
 export function speedAt(state: WorldState, a: Agent): number {
-  let s = CONFIG.speed * BIOMES[biomeAt(state, a.position)].speedMul;
+  let s = CONFIG.speed * BIOMES[biomeAt(state, a.position)].speedMul * traitMods(a.traits).speedMul;
   for (const h of Object.values(state.hazards)) {
     if (dist(h.position, a.position) < h.radius) s *= HAZARDS[h.kind].speedMul;
   }
@@ -117,8 +143,19 @@ function fail(state: WorldState, a: Agent, act: ActiveAction, detail: string): '
   return 'failed';
 }
 
+const VISIBLE: Partial<Record<ActionType, string>> = {
+  gather: 'gathering', eat: 'eating', drink: 'drinking', cook: 'cooking', craft: 'crafting', build: 'building',
+  give: 'handing over', pickup: 'picking up', drop: 'dropping', deposit: 'storing', withdraw: 'taking from storage', inspect: 'inspecting',
+};
+
 function ok(state: WorldState, a: Agent, act: ActiveAction, detail: string, log = true): 'done' {
   recordOutcome(state, a, act.action.type, true, detail, log);
+  // Others can briefly see what was done (observable behaviour, e.g. for imitation). Labels, not truths.
+  const verb = VISIBLE[act.action.type];
+  if (verb) {
+    const m = detail.match(/(?:ate|gathered|drank from|cooked|crafted|built|gave|picked up|dropped|stored|took|inspect\w*)\s+([^:[(]+)/);
+    a.lastVisibleAct = { text: `${verb}${m ? ' ' + m[1].trim().slice(0, 40) : ''}`, until: state.time + CONFIG.visibleActSec };
+  }
   return 'done';
 }
 
@@ -182,8 +219,9 @@ function eatEffect(state: WorldState, a: Agent, item: Item, rng: Rng): string {
     a.sickUntil = 0;
     parts.push('your nausea passes (sickness cured)');
   }
+  const resist = traitMods(a.traits).poisonResist;
   if (fx.poisonSec) {
-    a.poisonedUntil = Math.max(a.poisonedUntil, state.time + fx.poisonSec);
+    a.poisonedUntil = Math.max(a.poisonedUntil, state.time + fx.poisonSec * resist);
     a.stats.poisonings++;
     parts.push(`bitter aftertaste, then stomach cramps — you are POISONED for ${fx.poisonSec}s`);
     track(state, a, 'hurt', `poisoned by ${item.label} (truth: ${item.kind})`, false);
@@ -191,7 +229,7 @@ function eatEffect(state: WorldState, a: Agent, item: Item, rng: Rng): string {
   }
   const sick = fx.sickSec && (fx.sickChance === undefined || rng() < fx.sickChance);
   if (sick) {
-    a.sickUntil = Math.max(a.sickUntil, state.time + fx.sickSec!);
+    a.sickUntil = Math.max(a.sickUntil, state.time + fx.sickSec! * resist);
     parts.push(`you feel nauseous — SICK for ${fx.sickSec}s`);
   }
   return parts.join('; ') || 'no noticeable effect';
@@ -350,25 +388,47 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
     }
 
     case 'say': {
+      const mode = state.experiment.commMode;
+      if (mode !== 'english') return fail(state, a, act, mode === 'proto' ? 'you have no words — only sounds (use signal)' : 'you cannot make sounds in this world');
       const text = action.text.slice(0, CONFIG.messageMaxChars).trim();
       if (!text) return fail(state, a, act, 'empty message');
-      const recipients = Object.values(state.agents).filter(
-        (r) => r.id !== a.id && r.status !== 'dead' && dist(r.position, a.position) <= CONFIG.commRadius,
-      );
-      const id = newId(state, 'm');
-      for (const r of recipients) {
-        r.inbox.push({ id, senderId: a.id, text, sentAt: state.time });
-        if (r.inbox.length > CONFIG.inboxMax) r.inbox.shift();
-        r.messagesHeard++;
-        track(state, r, 'heard', `${a.id}: "${text}"`);
-        interrupt(r, `message from ${a.id}`);
-      }
-      const to = recipients.map((r) => r.id).join(', ') || 'nobody in range';
-      a.messagesSent++;
-      track(state, a, 'said', `"${text}" → ${to}`, recipients.length > 0);
-      recordOutcome(state, a, 'say', true, `said "${text}" → ${to}`, false, false);
-      logEvent(state, { kind: 'message', agentId: a.id, ok: recipients.length > 0, text: `${a.id} → ${to}: "${text}"` });
+      return deliver(state, a, act, 'speech', text);
+    }
+
+    case 'signal': {
+      const mode = state.experiment.commMode;
+      if (mode === 'silent') return fail(state, a, act, 'you cannot make sounds in this world');
+      const lex = new Set(state.experiment.lexicon);
+      const tokens = action.tokens.map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, CONFIG.maxSignalTokens);
+      const bad = tokens.filter((t) => !lex.has(t));
+      if (!tokens.length || bad.length) return fail(state, a, act, `you cannot make the sound(s) ${bad.join(' ') || '(none)'}; you can only make: ${state.experiment.lexicon.join(' ')}`);
+      return deliver(state, a, act, 'signal', tokens.join(' '));
+    }
+
+    case 'gesture': {
+      a.gesture = { kind: action.gesture, toward: action.toward ? clampToBounds(action.toward, state.bounds) : undefined, until: state.time + CONFIG.gestureSec };
+      const seers = Object.values(state.agents).filter((o) => o.id !== a.id && o.status !== 'dead' && dist(o.position, a.position) <= senseRadius(state, o));
+      recordUtterance(state, a, 'gesture', action.gesture + (action.toward ? ` toward ${bearingOf(a.position, action.toward)}` : ''), seers);
+      for (const o of seers) interrupt(o, `${a.id} made a gesture`);
+      track(state, a, 'said', `gestured: ${action.gesture}${action.toward ? ` toward ${bearingOf(a.position, action.toward)}` : ''} (seen by ${seers.map((o) => o.id).join(', ') || 'nobody'})`, seers.length > 0);
+      for (const o of seers) track(state, o, 'heard', `saw ${a.id} ${action.gesture}${action.toward ? ` toward ${bearingOf(a.position, action.toward)}` : ''}`);
+      recordOutcome(state, a, 'gesture', true, `${action.gesture} (seen by ${seers.length})`, false, true);
       return 'done';
+    }
+
+    case 'mark': {
+      const mode = state.experiment.commMode;
+      const glyph = action.glyph.trim().toLowerCase().slice(0, 12);
+      if (mode !== 'english' && !state.experiment.lexicon.includes(glyph))
+        return fail(state, a, act, `you can only scratch these shapes: ${state.experiment.lexicon.join(' ')}`);
+      if (!glyph) return fail(state, a, act, 'empty mark');
+      const id = newId(state, 'k');
+      state.marks[id] = { id, glyph, position: { ...a.position }, by: a.id, at: state.time, expiresAt: state.time + CONFIG.markTtlSec };
+      const ids = Object.keys(state.marks);
+      if (ids.length > CONFIG.maxMarks) delete state.marks[ids[0]];
+      recordUtterance(state, a, 'mark', glyph, []);
+      track(state, a, 'said', `scratched mark "${glyph}" on the ground at (${a.position.x.toFixed(0)}, ${a.position.z.toFixed(0)})`);
+      return ok(state, a, act, `left mark ${id} "${glyph}"`);
     }
 
     case 'craft': {
