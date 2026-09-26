@@ -10,6 +10,13 @@ import { interpretWorldCommand } from './worldCommand';
 
 export type ApiResult = { status: number; body: unknown };
 
+/**
+ * Cost kill switch: every paid LLM route is OFF unless LLM_ENABLED=true is set in the server environment
+ * (local .env or the Netlify site's environment variables). Scripted creatures keep working without it.
+ */
+const llmEnabled = () => /^(1|true|yes|on)$/i.test(process.env.LLM_ENABLED?.trim() ?? '');
+const DISABLED: ApiResult = { status: 503, body: { error: 'LLM calls are switched off to save cost (set LLM_ENABLED=true on the server to re-enable)' } };
+
 // Fruit-fly (connectome) mode is hidden unless ENABLE_FLY_MODE=true|1 in the server environment.
 const flyModeEnabled = () => /^(1|true|yes|on)$/i.test(process.env.ENABLE_FLY_MODE?.trim() ?? '');
 
@@ -32,7 +39,9 @@ export function health(headers: Headers): ApiResult {
   const source = credentialSource();
   const models = { fast: modelFor('fast'), smart: modelFor('smart') };
   const locked = !unlocked(headers);
-  const body: HealthResponse = !source
+  const body: HealthResponse = !llmEnabled()
+    ? { llmConfigured: false, models, detail: 'LLM calls are switched off to save cost (LLM_ENABLED is not true). Creatures run the scripted baseline.' }
+    : !source
     ? { llmConfigured: false, models, detail: 'No Anthropic credentials on the server. Set ANTHROPIC_API_KEY in .env (or the host environment) or run `ant auth login`, then restart.' }
     : locked
       ? { llmConfigured: false, models, detail: 'LLM agents are locked on this deployment: enter the access code.', locked: true }
@@ -41,6 +50,7 @@ export function health(headers: Headers): ApiResult {
 }
 
 export async function decideRoute(body: unknown, headers: Headers): Promise<ApiResult> {
+  if (!llmEnabled()) return DISABLED;
   if (!credentialSource()) return { status: 503, body: { error: 'LLM not configured: no Anthropic credentials on server' } };
   if (!unlocked(headers)) return LOCKED;
   const parsed = DecideRequestSchema.safeParse(body);
@@ -70,6 +80,7 @@ export async function decideRoute(body: unknown, headers: Headers): Promise<ApiR
 // Natural-language God mode: the model may only emit allowlisted WorldEdits (or answer status questions from the
 // supplied snapshot); the browser simulator validates and applies edits.
 export async function worldCommandRoute(body: unknown, headers: Headers): Promise<ApiResult> {
+  if (!llmEnabled()) return DISABLED;
   if (!credentialSource()) return { status: 503, body: { error: 'LLM not configured: set ANTHROPIC_API_KEY on the server to use natural-language God mode (the direct God buttons still work)' } };
   if (!unlocked(headers)) return LOCKED;
   const parsed = WorldCommandRequestSchema.safeParse(body);
@@ -94,6 +105,7 @@ export async function worldCommandRoute(body: unknown, headers: Headers): Promis
 
 // Observer agent: reads recorded moments and earlier-run summaries, returns grounded insights.
 export async function observeRoute(body: unknown, headers: Headers): Promise<ApiResult> {
+  if (!llmEnabled()) return DISABLED;
   if (!credentialSource()) return { status: 503, body: { error: 'LLM not configured: set ANTHROPIC_API_KEY on the server to enable the observer' } };
   if (!unlocked(headers)) return LOCKED;
   const parsed = ObserveRequestSchema.safeParse(body);
