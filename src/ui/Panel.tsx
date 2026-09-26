@@ -1,3 +1,4 @@
+import { setAccessCode } from '../controllers/access';
 import { useState } from 'react';
 import { flyDriverStatus } from '../controllers/fly/driver';
 import { CONFIG } from '../shared/config';
@@ -151,6 +152,20 @@ export function Panel({
         ) : (
           <div className={`status ${llm ? 'ok' : 'warn'}`}>
             {health ? health.detail : 'checking server…'}
+            {health?.locked && (
+              <form
+                className="row"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const code = String(new FormData(e.currentTarget).get('code') ?? '').trim();
+                  setAccessCode(code);
+                  window.location.reload();
+                }}
+              >
+                <input name="code" type="password" placeholder="access code" className="seed" style={{ width: 140 }} autoComplete="off" />
+                <button type="submit">Unlock LLM agents</button>
+              </form>
+            )}
             {!llm && <div className="small">LLM unavailable — only the labelled SCRIPTED baseline can run.</div>}
           </div>
         )}

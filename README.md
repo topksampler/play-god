@@ -47,6 +47,19 @@ npm run dev            # server :8787 + client http://localhost:5173 (proxies /a
 Checks: `npm run typecheck`, `npm test`, `npm run build`.
 Fly brain fidelity and speed: `npx tsx scripts/fly/smoke.ts`. Browser smoke test (headless Chrome, no extra dependencies): `node scripts/browser-smoke.mjs steps.json`. Rebuilding the fly circuit from FlyWire data: [tools/fly/README.md](tools/fly/README.md).
 
+## Deploy (Netlify, auto-deploys on every push)
+
+`netlify.toml` builds the Vite app (`npm run build` → `dist/`) and serves `/api/*` from one Netlify Function (`netlify/functions/api.ts`). It uses the same handlers as the local server (`server/routes.ts`).
+
+1. Netlify → **Add new site → Import an existing project → GitHub → `topksampler/play-god`**. The build settings come from `netlify.toml`.
+2. Site settings → **Environment variables** (server-side only, never `VITE_*`):
+   - `ANTHROPIC_API_KEY`, plus `ANTHROPIC_WORKSPACE_ID` if the key is not workspace-scoped
+   - optional: `ANTHROPIC_AGENT_MODEL`, `ANTHROPIC_SMART_MODEL`, `ENABLE_FLY_MODE`
+   - **`PLAY_GOD_ACCESS_CODE`**: strongly recommended on a public URL. Without it, anyone can spend your Anthropic credits through `/api/decide`. Visitors enter the code once in the panel; the scripted baseline works without it.
+3. Deploy. Every push to `main` then redeploys automatically.
+
+Limits: Netlify functions time out at 60 s (our calls take ~4–10 s). The concurrency cap is per function instance, so the access code is the real guard.
+
 ## Environment (server only — never `VITE_*`)
 
 | Var | Purpose |

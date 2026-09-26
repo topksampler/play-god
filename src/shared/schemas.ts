@@ -87,6 +87,8 @@ export type HealthResponse = {
   llmConfigured: boolean;
   models: { fast: string; smart: string } | null;
   detail: string;
+  /** True when the deployment requires an access code (PLAY_GOD_ACCESS_CODE) that this browser has not supplied. */
+  locked?: boolean;
   /** Optional UI features switched on in the server environment (e.g. ENABLE_FLY_MODE=true). */
   features?: { flyMode: boolean };
 };
