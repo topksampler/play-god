@@ -69,6 +69,7 @@ export function observe(state: WorldState, agentId: string): Observation {
       ageSec: Math.round(ageOf(state, self)),
       stage: stageOf(state, self),
       lifespanSec: state.experiment.lifespanSec || null,
+      lifeRemainingSec: state.experiment.lifespanSec ? Math.max(0, Math.round(state.experiment.lifespanSec - ageOf(state, self))) : null,
       generation: self.generation,
       children: self.children.length,
       courtedBy: Object.values(state.agents)

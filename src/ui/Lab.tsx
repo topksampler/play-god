@@ -32,9 +32,12 @@ function download(world: WorldState) {
     simTime: world.time,
     agents: Object.values(world.agents).map((a) => ({
       id: a.id, controller: a.controller.kind, tier: a.controller.tier, status: a.status, baseline: a.baseline,
+      generation: a.generation, parents: a.parents, children: a.children, traits: a.traits, deathCause: a.deathCause, bornAt: a.bornAt,
       stats: a.stats, actionCounts: a.actionCounts, memory: a.memory, milestones: a.milestones, timeline: a.timeline, growth: a.growth,
     })),
     utterances: world.utterances,
+    courtships: world.courtships,
+    births: world.births,
     worldHistory: world.history,
     events: world.events,
   };

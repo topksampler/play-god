@@ -18,6 +18,15 @@ Starting from no shared language, can agents that only share a world (not a voca
 
 Every agent also perceives other agents' **observable behaviour**: what they are doing ("gathering dark blue berries", "drinking"), what they hold (labels, not truths), and any gesture (with a compass direction when pointing). This allows imitation and social learning without any language.
 
+## Life cycle and mate choice
+
+- **Lifespan** (immortal / 5 / 10 / 20 min): agents age from child (first 45 s after birth) to adult to elder (last 20%, drains faster), then die of old age. So the population persists **only through births**.
+- **Births require mutual choice.** Both agents must `court` each other within 25 s while close (≤2.5 units). Both must be adults with energy ≥50 and health ≥50, and neither can be on its 90 s post-birth cooldown. Each parent pays 25 energy. A one-sided courtship **expires** and is logged as unreturned. When both choose each other but one can't reproduce, it is logged as `failed` with the reason.
+- **Partner cues:** others' life stage, how healthy they look (healthy/tired/weak/hurt), apparent traits ("lean and quick"), and whether they are courting *you*. Exact vitals are not visible.
+- **Offspring** inherit one parent's trait (15% mutation) and, under `inheritance: beliefs`, their parents' beliefs (cultural transmission). Otherwise they start with empty memory. They use the controller tier of one parent.
+- **Prompt framing** (documented because it shapes behaviour): agents are told they age and die, that their kind survives only if new creatures are born, how a birth works, and that courting, accepting or refusing anyone is their choice. No partner preferences are suggested.
+- **Measured:** courtship attempts and outcomes, selectivity (share of resolved courtships not returned), who courted whom and who was chosen, births, generations, deaths by cause, and a family tree (Lab → Life). The scripted control has a fixed rule (accept any courtship when fed; court the nearest healthy-looking adult), which serves as a non-selective baseline.
+
 ## Baseline per agent
 
 At spawn the simulator records each agent's endowment (`agent.baseline`): controller/model tier, communication condition, traits, capacity, sight/speed/poison multipliers and starting vitals. It is shown at the top of the agent's **Growth** tab and included in exports.

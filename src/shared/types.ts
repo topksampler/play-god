@@ -121,6 +121,8 @@ export type Observation = {
     ageSec: number;
     stage: LifeStage;
     lifespanSec: number | null;
+    /** Seconds until death of old age (null if immortal). */
+    lifeRemainingSec: number | null;
     generation: number;
     children: number;
     /** Who is currently courting you (they chose you). */
