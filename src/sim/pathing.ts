@@ -15,13 +15,29 @@ function grid(state: WorldState): Grid {
   const w = Math.ceil((max.x - min.x) / CELL);
   const h = Math.ceil((max.z - min.z) / CELL);
   const blocked = new Uint8Array(w * h);
-  const solids = Object.values(state.obstacles).filter((o) => o.solid);
   const pad = CONFIG.agentRadius + 0.05;
+  // World edges.
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
-      const p = { x: min.x + (i + 0.5) * CELL, z: min.z + (j + 0.5) * CELL };
-      const edge = p.x - min.x < pad || max.x - p.x < pad || p.z - min.z < pad || max.z - p.z < pad;
-      if (edge || solids.some((o) => obstacleDistance(o, p) < pad)) blocked[j * w + i] = 1;
+      const x = min.x + (i + 0.5) * CELL;
+      const z = min.z + (j + 0.5) * CELL;
+      if (x - min.x < pad || max.x - x < pad || z - min.z < pad || max.z - z < pad) blocked[j * w + i] = 1;
+    }
+  }
+  // Rasterise each solid obstacle over its bounding box only (O(obstacle area), not O(cells × obstacles)).
+  for (const o of Object.values(state.obstacles)) {
+    if (!o.solid) continue;
+    const reach = (o.halfLength !== undefined ? Math.hypot(o.halfLength, o.radius) : o.radius) + pad;
+    const i0 = Math.max(0, Math.floor((o.position.x - reach - min.x) / CELL));
+    const i1 = Math.min(w - 1, Math.floor((o.position.x + reach - min.x) / CELL));
+    const j0 = Math.max(0, Math.floor((o.position.z - reach - min.z) / CELL));
+    const j1 = Math.min(h - 1, Math.floor((o.position.z + reach - min.z) / CELL));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        if (blocked[j * w + i]) continue;
+        const p = { x: min.x + (i + 0.5) * CELL, z: min.z + (j + 0.5) * CELL };
+        if (obstacleDistance(o, p) < pad) blocked[j * w + i] = 1;
+      }
     }
   }
   const g = { key, w, h, minX: min.x, minZ: min.z, blocked };

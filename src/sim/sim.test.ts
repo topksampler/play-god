@@ -178,13 +178,18 @@ describe('movement and hazards', () => {
     expect(path).not.toBeNull();
   });
 
-  it('pathfinding cost stays bounded (full-map path under 60ms, generous for parallel CI)', async () => {
+  it('pathfinding cost stays bounded (grid build and full-map path)', async () => {
     const { findPath } = await import('./pathing');
     const s = createInitialWorld('r', 'scripted', { seed: 11 });
-    const t0 = performance.now();
+    let t0 = performance.now();
+    findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 }); // builds the occupancy grid
+    const first = performance.now() - t0;
+    t0 = performance.now();
     findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 });
-    findPath(s, { x: -38, z: -38 }, { x: 38, z: 38 });
-    expect((performance.now() - t0) / 2).toBeLessThan(60);
+    const cached = performance.now() - t0;
+    // Generous bounds so a loaded CI box doesn't flake; the uncontended numbers are ~10x smaller.
+    expect(first).toBeLessThan(80);
+    expect(cached).toBeLessThan(40);
   });
 
   it('hazards damage agents inside them and trigger a re-decision', () => {
