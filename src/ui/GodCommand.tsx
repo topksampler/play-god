@@ -28,6 +28,7 @@ const describe = (e: WorldEdit) => {
     case 'set_weather': return `weather → ${e.weather}${e.durationSec ? ` for ${Math.round(e.durationSec)}s` : ''}`;
     case 'set_time_of_day': return `time of day → ${e.timeOfDay}`;
     case 'spawn_agents': return `spawn ${e.count}`;
+    case 'kill_agent': return `strike down ${e.agentId}`;
   }
 };
 
@@ -127,7 +128,7 @@ export function GodCommand({ store, selectedId, llm }: { store: SimStore; select
         </button>
       </div>
       <div className="small">
-        Can change: weather (+duration), time of day, add/remove resources and hazards, add obstacles, spawn creatures. Can answer questions about the current world.
+        Can change: weather (+duration), time of day, add/remove resources and hazards, add obstacles, spawn or strike down creatures. Can answer questions about the current world.
       </div>
       {log.map((x) => (
         <div key={x.n} className="god-exchange kv">

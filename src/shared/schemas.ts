@@ -67,6 +67,7 @@ export const WorldEditSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('set_weather'), weather: z.enum(['clear', 'cloudy', 'rain', 'storm']), durationSec: z.number().min(10).max(600).optional() }),
   z.object({ type: z.literal('set_time_of_day'), timeOfDay: z.enum(['dawn', 'day', 'dusk', 'night']) }),
   z.object({ type: z.literal('spawn_agents'), count: z.number().int().min(1).max(10), controller: z.enum(['scripted', 'llm', 'fly']) }),
+  z.object({ type: z.literal('kill_agent'), agentId: id }),
 ]);
 
 /**

@@ -399,7 +399,8 @@ export type WorldEdit =
   | { type: 'remove_hazard'; hazardId: string }
   | { type: 'set_weather'; weather: Weather; durationSec?: number }
   | { type: 'set_time_of_day'; timeOfDay: TimeOfDay }
-  | { type: 'spawn_agents'; count: number; controller: ControllerKind };
+  | { type: 'spawn_agents'; count: number; controller: ControllerKind }
+  | { type: 'kill_agent'; agentId: string };
 
 /** Commands accepted by the store. The only way to mutate world state. */
 export type SimCommand =

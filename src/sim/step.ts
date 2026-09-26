@@ -96,6 +96,14 @@ export function applyWorldEdit(state: WorldState, edit: WorldEdit, source: strin
       const id = addNode(state, edit.kind, p);
       return log(true, `added ${edit.kind} ${id} at (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`);
     }
+    case 'kill_agent': {
+      const a = state.agents[edit.agentId];
+      if (!a) return log(false, `kill_agent rejected: no creature ${edit.agentId}`);
+      if (a.status === 'dead') return log(false, `kill_agent rejected: ${a.id} is already dead`);
+      a.deathCause = 'struck down by God';
+      die(state, a);
+      return log(true, `struck down ${a.id}`);
+    }
     case 'remove_resource':
       if (!state.resources[edit.nodeId]) return log(false, `remove_resource rejected: no ${edit.nodeId}`);
       delete state.resources[edit.nodeId];
@@ -390,17 +398,28 @@ function stepBody(state: WorldState, a: Agent, dt: number, rng: Rng) {
     }
   }
 
-  if (a.health <= 0) {
-    a.deathCause ??= a.poisonedUntil > state.time ? 'poison' : a.energy <= 0 ? 'starvation' : a.hydration <= 0 ? 'dehydration' : 'injury';
-    a.status = 'dead';
-    a.courting = null;
-    a.plan = [];
-    a.current = null;
-    a.target = null;
-    a.controller.needsDecision = false;
-    logEvent(state, { kind: 'death', agentId: a.id, ok: false, text: `✝ ${a.id} died of ${a.deathCause} at age ${ageOf(state, a).toFixed(0)}s (gen ${a.generation}, ${a.children.length} children)` });
-    milestone(state, a, `Died of ${a.deathCause} after ${(state.time - a.bornAt).toFixed(0)}s`);
+  if (a.health <= 0) die(state, a);
+}
+
+/** The single death path: natural causes (health reached 0) or a God edit. */
+function die(state: WorldState, a: Agent) {
+  a.health = 0;
+  a.deathCause ??= a.poisonedUntil > state.time ? 'poison' : a.energy <= 0 ? 'starvation' : a.hydration <= 0 ? 'dehydration' : 'injury';
+  a.status = 'dead';
+  a.courting = null;
+  a.plan = [];
+  a.current = null;
+  a.target = null;
+  a.controller.needsDecision = false;
+  // Invalidate any decision still in flight for this agent.
+  a.controller.pending = false;
+  a.controller.requestSeq += 1;
+  if (a.fly) {
+    a.fly.speed = 0;
+    a.fly.feeding = false;
   }
+  logEvent(state, { kind: 'death', agentId: a.id, ok: false, text: `✝ ${a.id} died of ${a.deathCause} at age ${ageOf(state, a).toFixed(0)}s (gen ${a.generation}, ${a.children.length} children)` });
+  milestone(state, a, `Died of ${a.deathCause} after ${(state.time - a.bornAt).toFixed(0)}s`);
 }
 
 function stepPlan(state: WorldState, a: Agent, dt: number, rng: Rng) {

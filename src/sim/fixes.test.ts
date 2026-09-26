@@ -84,3 +84,45 @@ describe('movement and body fixes', () => {
     expect(dist(s.agents.a1.position, { x: 6, z: 0 })).toBeLessThan(0.5);
   });
 });
+
+describe('God power: kill_agent', () => {
+  const kill = (s: WorldState, agentId: string) => apply(s, { type: 'edit', source: 'test', edit: { type: 'kill_agent', agentId } });
+
+  it('strikes a creature dead immediately, even while paused, and logs it', () => {
+    const s = blank();
+    apply(s, { type: 'pause' });
+    kill(s, 'a1');
+    const a = s.agents.a1;
+    expect(a.status).toBe('dead');
+    expect(a.health).toBe(0);
+    expect(a.deathCause).toBe('struck down by God');
+    expect(s.events.some((e) => e.kind === 'death' && e.text.includes('struck down by God'))).toBe(true);
+  });
+
+  it('discards a decision that was in flight for the killed agent', () => {
+    const s = blank();
+    const seq = s.agents.a1.controller.requestSeq + 1;
+    apply(s, { type: 'decisionStarted', agentId: 'a1', runId: s.runId, seq, observation: observe(s, 'a1') });
+    kill(s, 'a1');
+    apply(s, { type: 'decisionResult', agentId: 'a1', runId: s.runId, seq, decision: { plan: [{ type: 'move', target: { x: 5, z: 5 } }] }, latencyMs: 1 });
+    expect(s.agents.a1.plan).toEqual([]);
+    run(s, 1);
+    expect(s.agents.a1.position).toEqual({ x: 0, z: 0 });
+  });
+
+  it('rejects unknown or already-dead targets', () => {
+    const s = blank();
+    kill(s, 'a99');
+    expect(s.events.at(-1)?.text).toMatch(/no creature a99/);
+    kill(s, 'a1');
+    kill(s, 'a1');
+    expect(s.events.at(-1)?.text).toMatch(/already dead/);
+  });
+
+  it('works on connectome flies too', () => {
+    const s = createInitialWorld('r', 'scripted', { mode: 'flies' });
+    kill(s, 'f1');
+    expect(s.agents.f1.status).toBe('dead');
+    expect(s.agents.f1.fly?.speed).toBe(0);
+  });
+});

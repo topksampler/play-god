@@ -52,7 +52,7 @@ function FlyInspector({ agent, now }: { agent: Agent; now: number }) {
       <div className="agent-head">
         <h2 style={{ color: agent.color }}>{agent.id}</h2>
         <span className={`pill ${agent.status === 'dead' ? 'harmful' : 'safe'}`}>{agent.status}</span>
-        <span className="small">connectome fly · brain {f.brainStatus} · age {f0(now - agent.bornAt)}s</span>
+        <span className="small">connectome fly · brain {agent.status === 'dead' ? 'stopped' : f.brainStatus} · age {f0(now - agent.bornAt)}s</span>
       </div>
       <h3>World truth (simulator)</h3>
       <div className="grid2 tight">
@@ -85,6 +85,20 @@ function FlyInspector({ agent, now }: { agent: Agent; now: number }) {
       )}
       <div className="small">Body-level rules (not neural): walking speed, exploratory turning noise, collision side-step, hunger gain on sensory input.</div>
       {agent.controller.lastError && <div className="err small">brain error: {agent.controller.lastError}</div>}
+      <SmiteButton agent={agent} />
+    </div>
+  );
+}
+
+/** God power: strike the selected creature dead (a validated world edit, logged like any other). */
+function SmiteButton({ agent }: { agent: Agent }) {
+  const store = useSim();
+  if (agent.status === 'dead') return null;
+  return (
+    <div className="row">
+      <button className="smite" onClick={() => store.dispatch({ type: 'edit', source: 'God button', edit: { type: 'kill_agent', agentId: agent.id } })}>
+        ⚡ Strike {agent.id} down
+      </button>
     </div>
   );
 }
@@ -275,6 +289,7 @@ export function Panel({
               </span>
             </div>
             {agent.controller.lastError && <div className="err small">error: {agent.controller.lastError}</div>}
+            <SmiteButton agent={agent} />
             <Dossier agent={agent} tab={tab} setTab={setTab} focusSeq={focusSeq} />
           </div>
         )}
