@@ -1,5 +1,6 @@
 import { DecisionSchema, type HealthResponse } from '../shared/schemas';
 import type { Controller } from '../shared/types';
+import { apiHeaders } from './access';
 
 /** Real LLM controller: calls the server's /api/decide. Keys never reach the browser. */
 export const llmController: Controller = {
@@ -7,7 +8,7 @@ export const llmController: Controller = {
   async decide({ observation, memory, tier }, signal) {
     const res = await fetch('/api/decide', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ tier, observation, memory }),
       signal,
     });
@@ -21,7 +22,7 @@ export const llmController: Controller = {
 
 export async function fetchHealth(): Promise<HealthResponse> {
   try {
-    const res = await fetch('/api/health');
+    const res = await fetch('/api/health', { headers: apiHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as HealthResponse;
   } catch (e) {

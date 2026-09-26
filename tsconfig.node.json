@@ -11,5 +11,5 @@
     "isolatedModules": true,
     "types": ["node"]
   },
-  "include": ["server", "vite.config.ts", "src/shared"]
+  "include": ["server", "netlify", "vite.config.ts", "src/shared"]
 }

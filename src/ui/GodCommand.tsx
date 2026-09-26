@@ -1,3 +1,4 @@
+import { apiHeaders } from '../controllers/access';
 import { useState, useSyncExternalStore } from 'react';
 import type { WorldCommandResponse } from '../shared/schemas';
 import type { WorldEdit } from '../shared/types';
@@ -80,7 +81,7 @@ export function GodCommand({ store, selectedId, llm }: { store: SimStore; select
       const request = async () => {
         const res = await fetch('/api/world-command', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ text: t, world: worldStatus(store.getLiveState(), selectedId) }),
           signal: AbortSignal.timeout(25000),
         });
