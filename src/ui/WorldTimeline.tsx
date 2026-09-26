@@ -1,13 +1,17 @@
 import { useState } from 'react';
 import type { TimelineEntry } from '../shared/types';
-import { useWorldThrottled } from '../sim/react';
+import { useReplay, useSim, useWorldThrottled } from '../sim/react';
 import { KIND_STYLE, KINDS } from './kinds';
+import { ReplayControls } from './ReplayControls';
 
 const WINDOWS = [60, 180, 600] as const;
 
 /** Swimlanes: one lane per agent, one mark per recorded event, over a sliding window of sim time. */
 export function WorldTimeline({ selectedId, onPick }: { selectedId: string | null; onPick: (agentId: string, seq: number) => void }) {
-  const world = useWorldThrottled(500);
+  useWorldThrottled(500); // re-render cadence
+  // The timeline always spans the live window; clicking or dragging on it shows that moment (see ReplayControls).
+  const world = useSim().getLiveState();
+  const replay = useReplay();
   const [win, setWin] = useState<number>(180);
   const [hover, setHover] = useState<{ x: number; y: number; e: TimelineEntry; agent: string } | null>(null);
   const agents = Object.values(world.agents);
@@ -21,6 +25,14 @@ export function WorldTimeline({ selectedId, onPick }: { selectedId: string | nul
   const ticks: number[] = [];
   const step = win <= 60 ? 10 : win <= 180 ? 30 : 60;
   for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) ticks.push(t);
+  const recStart = replay.range().start;
+  const vt = replay.getViewTime();
+  const seekAt = (e: React.PointerEvent<SVGSVGElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - box.left) / box.width) * W;
+    if (px < LEFT) return;
+    replay.seek(t0 + ((px - LEFT) / (W - LEFT - 8)) * Math.max(1, t1 - t0));
+  };
 
   return (
     <div className="wtl">
@@ -32,13 +44,22 @@ export function WorldTimeline({ selectedId, onPick }: { selectedId: string | nul
           </span>
         ))}
         <span className="spacer" />
+        <ReplayControls />
         {WINDOWS.map((w) => (
           <button key={w} className={`chip-btn ${w === win ? 'on' : ''}`} onClick={() => setWin(w)}>
             last {w >= 60 ? `${w / 60}m` : `${w}s`}
           </button>
         ))}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ height: H }} onMouseLeave={() => setHover(null)}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ height: H, cursor: 'col-resize' }}
+        onMouseLeave={() => setHover(null)}
+        onPointerDown={seekAt}
+        onPointerMove={(e) => e.buttons & 1 && seekAt(e)}
+      >
+        {recStart > t0 && <rect x={LEFT} y={12} width={Math.max(0, x(recStart) - LEFT)} height={H - 12} className="wtl-norec" />}
         {ticks.map((t) => (
           <g key={t}>
             <line x1={x(t)} x2={x(t)} y1={12} y2={H} className="wtl-grid" />
@@ -75,13 +96,19 @@ export function WorldTimeline({ selectedId, onPick }: { selectedId: string | nul
             </g>
           );
         })}
+        {vt !== null && (
+          <g className="wtl-playhead">
+            <line x1={x(vt)} x2={x(vt)} y1={0} y2={H} />
+            <path d={`M${x(vt) - 5},0L${x(vt) + 5},0L${x(vt)},7Z`} />
+          </g>
+        )}
       </svg>
       {hover && (
         <div className="wtl-tip" style={{ left: `${(hover.x / W) * 100}%`, top: hover.y + 30 }}>
           <b>{hover.agent}</b> · {KIND_STYLE[hover.e.kind].label} · {hover.e.at.toFixed(0)}s
           <br />
           {hover.e.text}
-          <div className="small">click to open in the agent's timeline</div>
+          <div className="small">click to open in the agent's timeline and view that moment</div>
         </div>
       )}
     </div>

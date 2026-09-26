@@ -8,7 +8,7 @@ Actions: move (optional sprint), follow, gather, eat, drink, drop, pickup, give,
 
 ## Two modes
 
-Toggle **LLM agents / Fruit flies (connectome)** at the top of the side panel (switching starts a fresh world in that mode).
+Toggle **LLM agents / Fruit flies (connectome)** at the top of the side panel (switching starts a fresh world in that mode). The fruit-fly tab is experimental and hidden unless the server runs with `ENABLE_FLY_MODE=true`.
 
 - **LLM agents** — everything above.
 - **Fruit flies (connectome)**: each fly runs its own spiking circuit of 5,966 neurons and 432K synapses from the FlyWire adult *Drosophila* connectome, pruned from the Shiu et al. whole-brain LIF model.
@@ -22,8 +22,19 @@ Toggle **LLM agents / Fruit flies (connectome)** at the top of the side panel (s
 
 ## God mode
 
-- **Natural language (LLM):** e.g. "put fruit trees in the northeast corner". The server model may only emit allowlisted edits (`add_resource`, `remove_resource`, `add_obstacle`, `add_hazard`, `set_weather`, `spawn_agents`). The browser simulator validates and applies them, and each outcome shows in the event feed. Needs `ANTHROPIC_API_KEY`.
+- **Natural language (LLM):** commands such as "put fruit trees in the northeast corner", "storm for 2 minutes" or "make it night", and questions such as "how is everyone doing?".
+  - The server model may only emit allowlisted edits: `add_resource`, `remove_resource`, `add_obstacle`, `add_hazard`, `remove_hazard`, `set_weather` (optional duration), `set_time_of_day`, `spawn_agents`.
+  - The browser simulator validates and applies them. The console shows each interpreted edit with its actual ✓/✗ outcome.
+  - Questions are answered only from a snapshot of the live world (`src/sim/status.ts`). Distances and minima are precomputed there, not estimated by the model.
+  - Chat history is kept in the browser (localStorage). Needs `ANTHROPIC_API_KEY`.
 - **Direct buttons** (World tab; not LLM): weather, +berries, +fruit tree, +water, +brown/toxic mushrooms, +thorns near the selected creature.
+
+## Time travel (replay)
+
+- The last 10 minutes of sim time are recorded, one snapshot per sim-second (`src/sim/replay.ts`).
+- Click or drag on the bottom timeline, or use ⏪ 10s, to view any recorded moment. The 3D world, minimap, HUD and inspector show that moment, and ▶ plays it forward at 1×/2×/4×. **Go live** (or catching up) returns to the present.
+- The live simulation, LLM decisions and God commands keep running on the live world while you look at the past. Recording only reads state.
+- The history is display-only: you can't branch or edit the past. Reset or New world clears it.
 
 ## Run
 
@@ -47,6 +58,7 @@ Fly brain fidelity and speed: `npx tsx scripts/fly/smoke.ts`. Browser smoke test
 
 Without `ANTHROPIC_API_KEY`, the SDK falls back to an `ant auth login` profile. `.env` is read at server start: restart `npm run dev` after editing it.
 | `PORT` | Server port (default 8787). |
+| `ENABLE_FLY_MODE` | `true` shows the experimental fruit-fly (connectome) tab. Hidden by default. |
 
 ## Architecture
 

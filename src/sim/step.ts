@@ -1,8 +1,8 @@
 import { BIOMES, HAZARDS, ITEMS } from '../shared/catalog';
 import { CONFIG } from '../shared/config';
-import type { Agent, AgentMemory, Decision, SimCommand, Vec2, Weather, WorldEdit, WorldState } from '../shared/types';
+import type { Agent, AgentMemory, Decision, SimCommand, TimeOfDay, Vec2, Weather, WorldEdit, WorldState } from '../shared/types';
 import { interrupt, recordOutcome, runAction } from './actions';
-import { nearStructure, senseRadius } from './environment';
+import { nearStructure, senseRadius, worldClock } from './environment';
 import { contextTags } from './communication';
 import { ageOf, stageOf, stepLife } from './life';
 import { blocked, clampToBounds, dist } from './geometry';
@@ -84,6 +84,9 @@ function applyDecision(state: WorldState, agent: Agent, decision: Decision) {
   agent.plan = decision.plan.slice(0, CONFIG.maxPlanLength);
 }
 
+/** Fraction of the day cycle where each phase begins (see timeOfDay). */
+const PHASE_START: Record<TimeOfDay, number> = { day: 0.02, dusk: 0.5, night: 0.6, dawn: 0.9 };
+
 export function applyWorldEdit(state: WorldState, edit: WorldEdit, source: string, rng: Rng) {
   const log = (ok: boolean, text: string) => logEvent(state, { kind: 'edit', ok, text: `[${source}] ${text}` });
   switch (edit.type) {
@@ -109,9 +112,22 @@ export function applyWorldEdit(state: WorldState, edit: WorldEdit, source: strin
       state.hazards[id] = { id, kind: edit.kind, position: p, radius: edit.radius };
       return log(true, `added ${edit.kind} hazard ${id}`);
     }
+    case 'remove_hazard':
+      if (!state.hazards[edit.hazardId]) return log(false, `remove_hazard rejected: no ${edit.hazardId}`);
+      delete state.hazards[edit.hazardId];
+      return log(true, `removed hazard ${edit.hazardId}`);
     case 'set_weather':
       setWeather(state, edit.weather, rng);
-      return log(true, `weather set to ${edit.weather}`);
+      if (edit.durationSec) state.nextWeatherAt = state.time + edit.durationSec;
+      return log(true, `weather set to ${edit.weather}${edit.durationSec ? ` for ~${Math.round(edit.durationSec)}s` : ''}`);
+    case 'set_time_of_day': {
+      // Shift only the day/night clock forward to just after the phase starts; sim time (ages, TTLs, spoilage) is untouched.
+      const L = CONFIG.dayLengthSec;
+      const current = worldClock(state) % L;
+      const desired = PHASE_START[edit.timeOfDay] * L + 1;
+      state.clockOffset += (desired - current + L) % L;
+      return log(true, `time of day set to ${edit.timeOfDay}`);
+    }
     case 'spawn_agents': {
       // Creatures always match the world's population type; plan agents use the current default controller.
       const controller = state.mode === 'flies' ? 'fly' : edit.controller === 'fly' ? state.defaultController : edit.controller;

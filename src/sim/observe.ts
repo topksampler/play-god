@@ -2,7 +2,7 @@ import { HAZARDS, NODES } from '../shared/catalog';
 import { CONFIG } from '../shared/config';
 import type { Observation, Vec2, WorldState } from '../shared/types';
 import { bearing, dist } from './geometry';
-import { senseRadius, timeOfDay } from './environment';
+import { senseRadius, timeOfDay, worldClock } from './environment';
 import { biomeAt } from './world';
 import { ageOf, stageOf, TRAIT_LOOKS } from './life';
 
@@ -47,7 +47,7 @@ export function observe(state: WorldState, agentId: string): Observation {
   return {
     runId: state.runId,
     observedAt: r1(state.time),
-    timeOfDay: timeOfDay(state.time),
+    timeOfDay: timeOfDay(worldClock(state)),
     weather: state.weather,
     self: {
       id: self.id,

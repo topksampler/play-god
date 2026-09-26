@@ -4,7 +4,7 @@ import { useMemo, useRef } from 'react';
 import { BufferAttribute, BufferGeometry, Color, type DirectionalLight, type Fog, type Group, type HemisphereLight, type LineSegments, type Vector3 } from 'three';
 import { CONFIG } from '../shared/config';
 import type { Agent } from '../shared/types';
-import { daylight, senseRadius } from '../sim/environment';
+import { daylight, senseRadius, worldClock } from '../sim/environment';
 import { dist } from '../sim/geometry';
 import { useSim, useWorldThrottled } from '../sim/react';
 import { GroundItemMesh, HazardMesh, ObstacleMesh, StructureMesh } from './Entities';
@@ -143,7 +143,7 @@ function Sky() {
   const tmp = useMemo(() => new Color(), []);
   useFrame(({ scene }) => {
     const s = store.getState();
-    const l = daylight(s.time);
+    const l = daylight(worldClock(s));
     const wx = s.weather === 'storm' ? 0.45 : s.weather === 'rain' ? 0.65 : s.weather === 'cloudy' ? 0.85 : 1;
     tmp.copy(night).lerp(day, l);
     if (wx < 1) tmp.lerp(storm, (1 - wx) * 0.8);

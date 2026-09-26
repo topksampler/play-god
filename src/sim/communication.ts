@@ -1,7 +1,7 @@
 import { NODES } from '../shared/catalog';
 import { CONFIG } from '../shared/config';
 import type { Agent, Utterance, WorldState } from '../shared/types';
-import { timeOfDay } from './environment';
+import { timeOfDay, worldClock } from './environment';
 import { dist } from './geometry';
 import { newId } from './world';
 
@@ -28,7 +28,7 @@ export function contextTags(state: WorldState, a: Agent): string[] {
   if (a.hydration < 40) tags.add('thirsty');
   if (a.items.some((i) => ['berries', 'fruit', 'mushroom', 'fish', 'cooked_fish', 'cactus_fruit', 'honey', 'cooked_mushroom'].includes(i.kind))) tags.add('carrying-food');
   if (Object.values(state.agents).some((o) => o.id !== a.id && o.status !== 'dead' && dist(o.position, a.position) < 4)) tags.add('agent-close');
-  if (timeOfDay(state.time) === 'night') tags.add('night');
+  if (timeOfDay(worldClock(state)) === 'night') tags.add('night');
   if (state.weather === 'storm') tags.add('storm');
   return [...tags].sort();
 }

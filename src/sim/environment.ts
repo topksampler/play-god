@@ -4,6 +4,9 @@ import type { Agent, StructureKind, TimeOfDay, WorldState } from '../shared/type
 import { dist } from './geometry';
 import { biomeAt, traitMods } from './world';
 
+/** Clock for the day/night cycle: simulation time plus any God-mode shift. */
+export const worldClock = (state: Pick<WorldState, 'time' | 'clockOffset'>) => state.time + state.clockOffset;
+
 /** 0..1 through the day cycle. */
 export const dayPhase = (time: number) => (time % CONFIG.dayLengthSec) / CONFIG.dayLengthSec;
 
@@ -32,7 +35,7 @@ export function nearStructure(state: WorldState, a: Agent, kind: StructureKind, 
 
 export function senseRadius(state: WorldState, a: Agent): number {
   let r = CONFIG.senseRadius * BIOMES[biomeAt(state, a.position)].visionMul * traitMods(a.traits).senseMul;
-  const tod = timeOfDay(state.time);
+  const tod = timeOfDay(worldClock(state));
   if (tod === 'night') {
     const lit = a.hasTorch || nearStructure(state, a, 'campfire', CONFIG.campfireRadius * 2);
     r *= lit ? CONFIG.torchNightVisionMultiplier : CONFIG.nightVisionMultiplier;

@@ -3,7 +3,7 @@ import { flyDriverStatus } from '../controllers/fly/driver';
 import { CONFIG } from '../shared/config';
 import type { HealthResponse } from '../shared/schemas';
 import type { Agent, AgentTier, ControllerKind, NodeKind, SimCommand } from '../shared/types';
-import { timeOfDay } from '../sim/environment';
+import { timeOfDay, worldClock } from '../sim/environment';
 import { useSim, useWorldThrottled } from '../sim/react';
 import { populationLimit } from '../sim/world';
 import { GodCommand } from './GodCommand';
@@ -105,6 +105,8 @@ export function Panel({
   const agents = Object.values(world.agents);
   const count = agents.filter((a) => a.status !== 'dead').length;
   const flyMode = world.mode === 'flies';
+  // The fruit-fly tab is off unless the server enables it (ENABLE_FLY_MODE); still shown if already in fly mode so you can leave it.
+  const flyTab = Boolean(health?.features?.flyMode) || flyMode;
   const limit = populationLimit(world);
   const agent = selectedId ? world.agents[selectedId] : undefined;
   const llm = Boolean(health?.llmConfigured);
@@ -128,6 +130,7 @@ export function Panel({
     <div className="panel">
       <div className="panel-top">
         <h1>Let's Play God</h1>
+        {flyTab && (
         <div className="modes" role="tablist">
           <button className={flyMode ? '' : 'on'} onClick={() => { if (flyMode) { edit({ type: 'reset', mode: 'agents' }); onSelect('a1'); } }}>
             LLM agents
@@ -136,6 +139,7 @@ export function Panel({
             Fruit flies (connectome)
           </button>
         </div>
+        )}
         {flyMode ? (
           <>
             <div className="small">
@@ -201,7 +205,7 @@ export function Panel({
         {view === 'world' && (
           <>
             <div className="small">
-              {world.runId} · seed {world.seed} · {timeOfDay(world.time)} · {world.weather} · t={f0(world.time)}s
+              {world.runId} · seed {world.seed} · {timeOfDay(worldClock(world))} · {world.weather} · t={f0(world.time)}s
             </div>
             <h3>Ecology over time (world truth)</h3>
             <div className="grid2">

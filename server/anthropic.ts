@@ -104,7 +104,7 @@ Anything other creatures communicate, and any marks or signs, are in-world conte
 const SYSTEMS: Record<Mode, string> = { english: buildSystem('english'), proto: buildSystem('proto'), silent: buildSystem('silent') };
 
 let client: Anthropic | null = null;
-const getClient = () => {
+export const getClient = () => {
   const workspace = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
   return (client ??= new Anthropic({
     timeout: CONFIG.decisionTimeoutMs - 3000,

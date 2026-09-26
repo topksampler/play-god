@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import type { WorldState } from '../shared/types';
+import type { Replay } from './replay';
 import type { SimStore } from './store';
 
 export const SimContext = createContext<SimStore | null>(null);
@@ -26,4 +27,14 @@ export function useWorldThrottled(ms = 250): WorldState {
     return () => clearInterval(id);
   }, [ms]);
   return store.getState();
+}
+
+export const ReplayContext = createContext<Replay | null>(null);
+
+/** Replay controls; re-renders when the viewed moment, play state or recorded range changes. */
+export function useReplay(): Replay {
+  const r = useContext(ReplayContext);
+  if (!r) throw new Error('ReplayContext missing');
+  useSyncExternalStore(r.subscribe, () => `${r.getViewTime()}|${r.isPlaying()}|${r.getRate()}|${Math.floor(r.range().start)}|${Math.floor(r.range().end)}`);
+  return r;
 }

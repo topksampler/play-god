@@ -5,6 +5,8 @@ import { createInitialWorld, type Rng } from './world';
 
 export type SimStore = {
   getState(): WorldState;
+  /** Always the live world, even through a replay view store whose getState() shows a past moment. */
+  getLiveState(): WorldState;
   /** Monotonic counter, bumps after each tick that changed anything. For useSyncExternalStore. */
   getVersion(): number;
   subscribe(fn: () => void): () => void;
@@ -45,6 +47,7 @@ export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStor
 
   const store: SimStore = {
     getState: () => state,
+    getLiveState: () => state,
     getVersion: () => version,
     subscribe(fn) {
       subs.add(fn);

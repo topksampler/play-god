@@ -336,6 +336,7 @@ export function createInitialWorld(
     runId,
     seed,
     time: CONFIG.dayLengthSec * 0.05,
+    clockOffset: 0,
     paused: false,
     mode,
     flyCapacity: opts.flyCapacity,

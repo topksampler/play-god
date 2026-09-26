@@ -351,6 +351,8 @@ export type WorldState = {
   runId: string;
   seed: number;
   time: number;
+  /** Added to `time` for the day/night cycle only (God mode "make it night"), so ages, TTLs and spoilage are unaffected. */
+  clockOffset: number;
   paused: boolean;
   mode: WorldMode;
   /** Live fly capacity reported by the brain workers (undefined until known). */
@@ -392,7 +394,9 @@ export type WorldEdit =
   | { type: 'remove_resource'; nodeId: string }
   | { type: 'add_obstacle'; shape: 'rock' | 'boulder' | 'tree'; position: Vec2; radius: number }
   | { type: 'add_hazard'; kind: HazardKind; position: Vec2; radius: number }
-  | { type: 'set_weather'; weather: Weather }
+  | { type: 'remove_hazard'; hazardId: string }
+  | { type: 'set_weather'; weather: Weather; durationSec?: number }
+  | { type: 'set_time_of_day'; timeOfDay: TimeOfDay }
   | { type: 'spawn_agents'; count: number; controller: ControllerKind };
 
 /** Commands accepted by the store. The only way to mutate world state. */
