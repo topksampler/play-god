@@ -16,6 +16,8 @@ export type SimStore = {
   tick(dt: number): void;
   start(): () => void;
   /** Simulation speed multiplier (0.25–4). Rendering is unaffected. */
+  /** Replace the world with a loaded snapshot (paused). Old async decisions are invalidated by the new runId. */
+  load(next: WorldState): void;
   getSpeed(): number;
   setSpeed(x: number): void;
   /** Extra slowdown (≤ 1) applied on top of speed. Fly mode lowers it when brains cannot keep up. */
@@ -69,6 +71,12 @@ export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStor
     getTimeScale: () => timeScale,
     setTimeScale(scale) {
       timeScale = Number.isFinite(scale) ? Math.min(1, Math.max(0.02, scale)) : 1;
+    },
+    load(next) {
+      queue.length = 0;
+      state = { ...next, paused: true };
+      acc = 0;
+      notify();
     },
     getSpeed: () => speed,
     setSpeed(x) {

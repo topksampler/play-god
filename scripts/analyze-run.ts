@@ -23,7 +23,11 @@ type Run = {
 };
 
 for (const file of process.argv.slice(2)) {
-  const r: Run = JSON.parse(readFileSync(file, 'utf8'));
+  const raw = JSON.parse(readFileSync(file, 'utf8'));
+  // v2 exports wrap the full world; flatten to the fields this script reads.
+  const r: Run = raw.format === 'play-god-run/2'
+    ? { ...raw.world, simTime: raw.world.time, agents: Object.values(raw.world.agents) }
+    : raw;
   const A = r.agents;
   const sum = (k: string) => A.reduce((n, a) => n + (a.stats[k] ?? 0), 0);
   let judged = 0, correct = 0, harmfulKnown = 0;

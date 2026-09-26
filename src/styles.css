@@ -120,3 +120,4 @@ button:disabled { opacity: 0.4; cursor: default; }
 .wtl-playhead path { fill: #c0392b; }
 .replay-banner { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); background: rgba(192,57,43,0.92); color: #fff; padding: 5px 10px; border-radius: 6px; font-size: 12.5px; z-index: 4; max-width: 70%; text-align: center; }
 .replay-banner button { margin-left: 8px; font-size: 11.5px; padding: 1px 8px; }
+.filebtn { font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 5px; background: #fff; cursor: pointer; } .filebtn input { display: none; }

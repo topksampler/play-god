@@ -78,7 +78,8 @@ export function observe(state: WorldState, agentId: string): Observation {
       courting: self.courting && self.courting.until > state.time ? self.courting.target : null,
       voice: {
         mode: state.experiment.commMode,
-        sounds: state.experiment.commMode === 'silent' ? [] : soundsFor(state.experiment.lexicon, self.id),
+        // Sounds exist only in proto mode (silent: none; english: agents use words).
+        sounds: state.experiment.commMode === 'proto' ? soundsFor(state.experiment.lexicon, self.id) : [],
       },
     },
     bounds: state.bounds,

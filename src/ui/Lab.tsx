@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { CommMode, Utterance, WorldState } from '../shared/types';
 import { TRAITS } from '../sim/world';
+import { exportRun, importRun } from '../sim/snapshot';
 import { useSim } from '../sim/react';
 import { Sparkline } from './charts/Sparkline';
 
@@ -24,24 +25,7 @@ function responses(world: WorldState, u: Utterance): Response[] {
 }
 
 function download(world: WorldState) {
-  const data = {
-    exportedAt: new Date().toISOString(),
-    runId: world.runId,
-    seed: world.seed,
-    experiment: world.experiment,
-    simTime: world.time,
-    agents: Object.values(world.agents).map((a) => ({
-      id: a.id, controller: a.controller.kind, tier: a.controller.tier, status: a.status, baseline: a.baseline,
-      generation: a.generation, parents: a.parents, children: a.children, traits: a.traits, deathCause: a.deathCause, bornAt: a.bornAt,
-      stats: a.stats, actionCounts: a.actionCounts, memory: a.memory, milestones: a.milestones, timeline: a.timeline, growth: a.growth,
-    })),
-    utterances: world.utterances,
-    courtships: world.courtships,
-    births: world.births,
-    worldHistory: world.history,
-    events: world.events,
-  };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+  const url = URL.createObjectURL(new Blob([JSON.stringify(exportRun(world))], { type: 'application/json' }));
   const el = document.createElement('a');
   el.href = url;
   el.download = `play-god-${world.runId}-seed${world.seed}-${world.experiment.commMode}.json`;
@@ -128,6 +112,7 @@ export function Lab({ world }: { world: WorldState }) {
   const [inheritance, setInheritance] = useState(world.experiment.inheritance);
   const [seed, setSeed] = useState(String(world.seed));
   const us = world.utterances;
+  const [loadNote, setLoadNote] = useState<string | null>(null);
 
   const stats = useMemo(() => {
     const byChannel = new Map<string, { n: number; delivered: number }>();
@@ -350,8 +335,28 @@ export function Lab({ world }: { world: WorldState }) {
 
       <div className="row">
         <button onClick={() => download(world)}>⬇ Export run (JSON)</button>
-        <span className="small">timelines, utterances + contexts, growth, memory, events</span>
+        <label className="filebtn">
+          📂 Load run
+          <input
+            type="file"
+            accept="application/json,.json"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              try {
+                const { world: w, note } = importRun(JSON.parse(await f.text()), `loaded:${f.name.replace(/\.json$/, '').slice(0, 40)}`);
+                store.load(w);
+                setLoadNote(`${f.name}: ${note}. Paused — press Resume to continue this world with live agents.`);
+              } catch (err) {
+                setLoadNote(`Could not load ${f.name}: ${(err as Error).message}`);
+              }
+              e.target.value = '';
+            }}
+          />
+        </label>
       </div>
+      <div className="small">Export = full world snapshot. Load replaces this tab's world (paused) so every view — 3D, dossiers, timeline, Lab — shows that run.</div>
+      {loadNote && <div className="status ok small">{loadNote}</div>}
     </div>
   );
 }
