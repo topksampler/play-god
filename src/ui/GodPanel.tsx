@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
-import { setAccessCode } from '../controllers/access';
+import { getAccessCode, setAccessCode } from '../controllers/access';
 import { observerStatus, requestObservation, subscribeObserver } from '../controllers/observer';
 import type { HealthResponse } from '../shared/schemas';
 import type { Agent, SimCommand, Vec2, WorldEdit, WorldState } from '../shared/types';
@@ -281,6 +281,8 @@ export function GodPanel({
         <button className="icon-btn" title="Advanced: speed, models, Lab, charts, raw events" onClick={() => onAdvanced()}>⚙</button>
       </header>
       <Pulse world={world} />
+      {/* TEMPORARY for the demo: remove once PLAY_GOD_ACCESS_CODE is rotated. */}
+      {llm && getAccessCode() && <div className="small" style={{ padding: '2px 14px' }}>🔓 unlocked · demo password: <b>passphrase</b></div>}
       {!llm && (
         <div className="gp-warn">
           {!health
