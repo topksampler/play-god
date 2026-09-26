@@ -393,7 +393,8 @@ export type WorldEdit =
   | { type: 'add_obstacle'; shape: 'rock' | 'boulder' | 'tree'; position: Vec2; radius: number }
   | { type: 'add_hazard'; kind: HazardKind; position: Vec2; radius: number }
   | { type: 'set_weather'; weather: Weather }
-  | { type: 'spawn_agents'; count: number; controller: ControllerKind };
+  | { type: 'spawn_agents'; count: number; controller: ControllerKind }
+  | { type: 'kill_agent'; agentId: string };
 
 /** Commands accepted by the store. The only way to mutate world state. */
 export type SimCommand =

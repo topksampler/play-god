@@ -63,6 +63,7 @@ export const WorldEditSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('add_hazard'), kind: z.enum(Object.keys(HAZARDS) as [HazardKind, ...HazardKind[]]), position: Vec2Schema, radius: z.number().min(0.5).max(6) }),
   z.object({ type: z.literal('set_weather'), weather: z.enum(['clear', 'cloudy', 'rain', 'storm']) }),
   z.object({ type: z.literal('spawn_agents'), count: z.number().int().min(1).max(10), controller: z.enum(['scripted', 'llm', 'fly']) }),
+  z.object({ type: z.literal('kill_agent'), agentId: id }),
 ]);
 
 /** Natural-language God mode: the instruction plus a minimal world summary to ground references. */
@@ -75,6 +76,7 @@ export const WorldCommandRequestSchema = z.object({
       selected: z.object({ id: id, x: finite, z: finite }).nullable(),
       biomes: z.array(z.object({ kind: z.string().max(20), x: finite, z: finite })).max(12),
       resources: z.array(z.object({ id: id, kind: z.string().max(30), x: finite, z: finite })).max(200),
+      agents: z.array(z.object({ id: id, x: finite, z: finite, status: z.string().max(10) })).max(100).default([]),
     })
     .refine((w) => JSON.stringify(w).length < 20000, 'world summary too large'),
 });

@@ -13,6 +13,9 @@ function summarize(world: WorldState, selectedId: string | null): WorldCommandRe
     resources: Object.values(world.resources)
       .slice(0, 200)
       .map((r) => ({ id: r.id, kind: r.kind, x: Math.round(r.position.x), z: Math.round(r.position.z) })),
+    agents: Object.values(world.agents)
+      .slice(0, 100)
+      .map((a) => ({ id: a.id, x: Math.round(a.position.x), z: Math.round(a.position.z), status: a.status })),
   };
 }
 
@@ -24,6 +27,7 @@ const describe = (e: WorldEdit) => {
     case 'add_hazard': return `add ${e.kind} r=${e.radius} at (${e.position.x.toFixed(0)}, ${e.position.z.toFixed(0)})`;
     case 'set_weather': return `weather → ${e.weather}`;
     case 'spawn_agents': return `spawn ${e.count}`;
+    case 'kill_agent': return `strike down ${e.agentId}`;
   }
 };
 
