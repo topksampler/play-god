@@ -120,6 +120,12 @@ export function createAgent(state: WorldState, position: Vec2, controller: Contr
     },
     gesture: null,
     lastVisibleAct: null,
+    generation: 0,
+    parents: [],
+    children: [],
+    courting: null,
+    lastBirthAt: -Infinity,
+    deathCause: null,
     turn: 0,
     timeline: [],
     growth: [],
@@ -175,9 +181,9 @@ export function sampleFreeSpot(
 
 export function spawnAgents(state: WorldState, count: number, controller: ControllerKind, tier: AgentTier, rng: Rng): string[] {
   const spawned: string[] = [];
-  const room = CONFIG.maxAgents - Object.keys(state.agents).length;
+  const room = CONFIG.maxAgents - Object.values(state.agents).filter((a) => a.status !== 'dead').length;
   if (room <= 0) {
-    logEvent(state, { kind: 'spawn', ok: false, text: `Spawn rejected: max ${CONFIG.maxAgents} agents` });
+    logEvent(state, { kind: 'spawn', ok: false, text: `Spawn rejected: max ${CONFIG.maxAgents} living agents via Spawn (births can go beyond)` });
     return spawned;
   }
   const n = Math.min(count, room);
@@ -331,9 +337,13 @@ export function createInitialWorld(
       commMode: opts.experiment?.commMode ?? 'english',
       traits: opts.experiment?.traits ?? false,
       scarcity: opts.experiment?.scarcity ?? 'normal',
+      lifespanSec: opts.experiment?.lifespanSec ?? CONFIG.defaultLifespanSec,
+      inheritance: opts.experiment?.inheritance ?? 'none',
       lexicon,
     },
     utterances: [],
+    courtships: [],
+    births: [],
     contextBase: { samples: 0, counts: {} },
     deliveries: [],
     events: [],

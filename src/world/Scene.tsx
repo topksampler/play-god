@@ -36,7 +36,9 @@ function AgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: bool
     .join(' ');
   return (
     <group ref={ref} position={[agent.position.x, 0, agent.position.z]}>
-      <Creature agent={agent} onSelect={onSelect} />
+      <group scale={agent.generation > 0 && store.getState().time - agent.bornAt < CONFIG.childSec ? 0.62 : 1}>
+        <Creature agent={agent} onSelect={onSelect} />
+      </group>
       {agent.hasTorch && !dead && <pointLight position={[0, 1.6, 0]} color="#ffb347" intensity={3} distance={8} />}
       <Label
         position={[0, 2, 0]}
@@ -45,6 +47,7 @@ function AgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: bool
           `${agent.id} · ${tierLabel(agent)}${c.pending ? ' …' : ''}${c.lastError ? ' ⚠' : ''}${dead ? ' · DEAD' : ''}`,
           `⚡${agent.energy.toFixed(0)} 💧${agent.hydration.toFixed(0)} ❤${agent.health.toFixed(0)} 🎒${agent.items.length}${cond ? ' ' + cond : ''}`,
           ...(agent.current && !dead ? [`▶ ${agent.current.action.type}${agent.plan.length ? ` (+${agent.plan.length})` : ''}`] : []),
+          ...(agent.courting && agent.courting.until > store.getState().time && !dead ? [`💗 → ${agent.courting.target}`] : []),
         ]}
       />
     </group>

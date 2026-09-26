@@ -4,6 +4,7 @@ import type { Observation, Vec2, WorldState } from '../shared/types';
 import { bearing, dist } from './geometry';
 import { senseRadius, timeOfDay } from './environment';
 import { biomeAt } from './world';
+import { ageOf, stageOf, TRAIT_LOOKS } from './life';
 
 /** Each agent sees the sound inventory in its own fixed shuffled order, so list position carries no shared meaning. */
 function soundsFor(lexicon: string[], agentId: string) {
@@ -65,6 +66,15 @@ export function observe(state: WorldState, agentId: string): Observation {
       currentAction: self.current?.action.type ?? null,
       planRemaining: self.plan.length,
       traits: self.traits,
+      ageSec: Math.round(ageOf(state, self)),
+      stage: stageOf(state, self),
+      lifespanSec: state.experiment.lifespanSec || null,
+      generation: self.generation,
+      children: self.children.length,
+      courtedBy: Object.values(state.agents)
+        .filter((o) => o.courting?.target === self.id && o.courting.until > state.time && o.status !== 'dead')
+        .map((o) => o.id),
+      courting: self.courting && self.courting.until > state.time ? self.courting.target : null,
       voice: {
         mode: state.experiment.commMode,
         sounds: state.experiment.commMode === 'silent' ? [] : soundsFor(state.experiment.lexicon, self.id),
@@ -99,8 +109,11 @@ export function observe(state: WorldState, agentId: string): Observation {
       const doing = a.lastVisibleAct && a.lastVisibleAct.until > state.time ? a.lastVisibleAct.text
         : a.status === 'resting' ? 'resting' : a.current?.action.type === 'move' || a.current?.action.type === 'follow' ? 'walking' : undefined;
       const g = a.gesture && a.gesture.until > state.time ? a.gesture : null;
+      const looks = a.health < 35 ? 'hurt' : a.energy < 30 || a.hydration < 30 ? 'weak' : a.stamina < 30 || a.energy < 50 ? 'tired' : 'healthy';
       return {
         id: a.id, position: pos(a.position), distance: r1(d(a.position)), status: a.status,
+        stage: stageOf(state, a), looks: looks as 'healthy' | 'tired' | 'hurt' | 'weak', appears: a.traits.map((t) => TRAIT_LOOKS[t]),
+        ...(a.courting?.target === self.id && a.courting.until > state.time ? { courtingYou: true } : {}),
         ...(doing ? { doing } : {}),
         ...(a.items.length ? { holding: a.items.slice(0, 4).map((i) => i.label) } : {}),
         ...(g ? { gesture: { kind: g.kind, ...(g.toward ? { toward: bearing(a.position, g.toward) } : {}) } } : {}),

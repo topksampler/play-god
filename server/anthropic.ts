@@ -27,7 +27,7 @@ export function credentialSource(): string | null {
 
 const ACTIONS = [
   'move', 'follow', 'gather', 'eat', 'drink', 'drop', 'pickup', 'give', 'rest', 'inspect', 'say', 'signal', 'gesture', 'mark',
-  'craft', 'build', 'cook', 'deposit', 'withdraw', 'wait',
+  'court', 'craft', 'build', 'cook', 'deposit', 'withdraw', 'wait',
 ] as const;
 type Mode = 'english' | 'proto' | 'silent';
 
@@ -77,7 +77,9 @@ You only know what you currently perceive (your observation) and your own privat
 
 Your body: energy (hunger), hydration (thirst), health and stamina, each 0-100. Energy and hydration drain constantly, faster in some biomes, in storms and while sprinting. If either hits 0 you lose health. At 0 health you die. Your traits (self.traits) may make you different from others.
 The world has several biomes, each with different resources and dangers. Resources regrow and spread; stripped patches can wither. Some things that look edible or drinkable are harmful, and you only know what they look like, never what they truly are. Learn from the outcomes of your actions and record what you conclude in "beliefs". Carried food spoils over time. Day turns to night (you see less) and the weather changes; storms are harsh without shelter.
-You can see other creatures nearby: what they are doing, what they hold, and any gesture they make.
+You can see other creatures nearby: what they are doing, what they hold, any gesture they make, their life stage, how healthy they look and how they appear.
+
+LIFE: You age (self.ageSec). Creatures die of old age after about self.lifespanSec seconds, so your kind survives only if new creatures are born. A birth happens only when two creatures each choose the other: both must "court" each other (targetId = the other creature) within ${CONFIG.courtWindowSec}s while close, both must be adults and reasonably fed and healthy (energy >= ${CONFIG.mateMinEnergy}, health >= ${CONFIG.mateMinHealth}), and it costs each parent ${CONFIG.mateEnergyCost} energy. self.courtedBy lists who has chosen you; returning it is your choice. You may court, accept, ignore or refuse anyone. Offspring start as children, weak and knowing little.
 
 Each turn, return a short plan of 1-${CONFIG.maxPlanLength} actions, executed in order. You will be asked again when the plan finishes, an action fails, you get hurt, someone communicates with you, or you become very hungry, thirsty or hurt.
 Actions (use ids exactly as they appear in your observation; set unused fields to null):
@@ -88,6 +90,7 @@ Actions (use ids exactly as they appear in your observation; set unused fields t
 - drop {itemId}. pickup {targetId = ground item id}. give {targetId = agent id, itemId}.
 - rest: stay still ~${CONFIG.restSeconds}s to recover stamina and health (faster near a shelter or campfire).
 - inspect {targetId}: look closely at a resource, hazard, item, structure or creature.
+- court {targetId = creature id}: walk up to them and show you choose them as a partner.
 ${COMM[mode]}
 - craft {recipe}: ${Object.entries(RECIPES).map(([k, r]) => `${k} = ${needs(r.needs)} (${r.effect})`).join('; ')}.
 - build {structure${mode === 'english' ? ', text for sign' : ''}}: ${Object.entries(STRUCTURES).filter(([k]) => mode === 'english' || k !== 'sign').map(([k, st]) => `${k} = ${needs(st.needs)} (${st.effect})`).join('; ')}.
@@ -123,6 +126,7 @@ function toAction(s: Step): unknown {
     case 'drop': return { type: 'drop', itemId: s.itemId ?? t };
     case 'pickup': return { type: 'pickup', groundItemId: t };
     case 'give': return { type: 'give', recipientId: t, itemId: s.itemId };
+    case 'court': return { type: 'court', agentId: t };
     case 'inspect': return { type: 'inspect', targetId: t ?? s.itemId };
     case 'say': return { type: 'say', text: s.text?.slice(0, CONFIG.messageMaxChars) };
     case 'signal': return { type: 'signal', tokens: (s.tokens ?? (s.text ? s.text.split(/\s+/) : [])).slice(0, CONFIG.maxSignalTokens) };

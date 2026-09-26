@@ -20,6 +20,7 @@ export const ActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('signal'), tokens: z.array(z.string().min(1).max(12)).min(1).max(CONFIG.maxSignalTokens) }),
   z.object({ type: z.literal('gesture'), gesture: z.enum(['point', 'beckon', 'wave', 'jump', 'crouch']), toward: Vec2Schema.optional() }),
   z.object({ type: z.literal('mark'), glyph: z.string().min(1).max(12) }),
+  z.object({ type: z.literal('court'), agentId: id }),
   z.object({ type: z.literal('craft'), recipe: z.enum(['basket', 'torch']) }),
   z.object({
     type: z.literal('build'),

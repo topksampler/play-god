@@ -25,6 +25,15 @@ export function scriptedDecide(obs: Observation, rng: () => number = Math.random
     if (water) return say([{ type: 'drink', sourceId: water.id }], 'drink');
   }
   if (self.energy < 70 && edible.length) return say([{ type: 'eat', itemId: edible[0].id }], 'eat');
+
+  // Hand-coded mate rule (control): return any courtship when well fed; otherwise court the nearest
+  // healthy-looking adult when fed and childless for now. Real selectivity is left to LLM agents.
+  if (self.stage !== 'child' && self.energy > 70 && self.health > 70) {
+    const suitor = obs.visibleAgents.find((a) => a.courtingYou);
+    if (suitor) return say([{ type: 'court', agentId: suitor.id }], `accept ${suitor.id}`);
+    const mate = obs.visibleAgents.find((a) => a.stage === 'adult' && a.looks === 'healthy' && a.distance < 8 && a.status !== 'dead');
+    if (mate && !self.courting && self.children < 2) return say([{ type: 'court', agentId: mate.id }], `court ${mate.id}`);
+  }
   if (self.stamina < 20 || self.health < 30) return say([{ type: 'rest' }], 'rest');
 
   const food = obs.visibleResources.find((r) => r.units > 0 && FOOD_NODE.test(r.appearance) && !AVOID.test(r.appearance));

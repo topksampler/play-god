@@ -5,6 +5,7 @@ import { blocked, clampToBounds, dist, obstacleDistance } from './geometry';
 import { nearStructure, senseRadius } from './environment';
 import { hearersOf, recordUtterance } from './communication';
 import { clearSegment, findPath } from './pathing';
+import { closeEnough, mateBlocker, recordCourtship, stageOf, tryBirth } from './life';
 import { biomeAt, logEvent, milestone, newId, type Rng, track, traitMods } from './world';
 import { BIOMES } from '../shared/catalog';
 
@@ -70,7 +71,7 @@ const fmt = (p: Vec2) => `(${p.x.toFixed(1)}, ${p.z.toFixed(1)})`;
 const SIDESTEP = [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, (3 * Math.PI) / 4, (-3 * Math.PI) / 4];
 
 export function speedAt(state: WorldState, a: Agent): number {
-  let s = CONFIG.speed * BIOMES[biomeAt(state, a.position)].speedMul * traitMods(a.traits).speedMul;
+  let s = CONFIG.speed * BIOMES[biomeAt(state, a.position)].speedMul * traitMods(a.traits).speedMul * (stageOf(state, a) === 'child' ? CONFIG.childSpeedMul : 1);
   for (const h of Object.values(state.hazards)) {
     if (dist(h.position, a.position) < h.radius) s *= HAZARDS[h.kind].speedMul;
   }
@@ -449,6 +450,49 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
       recordUtterance(state, a, 'mark', glyph, []);
       track(state, a, 'said', `scratched mark "${glyph}" on the ground at (${a.position.x.toFixed(0)}, ${a.position.z.toFixed(0)})`);
       return ok(state, a, act, `left mark ${id} "${glyph}"`);
+    }
+
+    case 'court': {
+      const t = state.agents[action.agentId];
+      if (!t || t.id === a.id) return fail(state, a, act, `no creature ${action.agentId}`);
+      if (t.status === 'dead') return fail(state, a, act, `${t.id} is dead`);
+      if (stageOf(state, a) === 'child') return fail(state, a, act, 'you are still a child');
+      if (stageOf(state, t) === 'child') return fail(state, a, act, `${t.id} is still a child`);
+      if (!closeEnough(a, t)) {
+        const s2 = approach(state, a, act, t.position, dt, CONFIG.courtDistance * 0.9);
+        if (s2) return s2;
+      }
+      const mutual = t.courting?.target === a.id && t.courting.until > state.time;
+      recordCourtship(state, a, t);
+      a.courting = { target: t.id, since: state.time, until: state.time + CONFIG.courtWindowSec };
+      if (!mutual) {
+        track(state, a, 'said', `courted ${t.id} (waiting ${CONFIG.courtWindowSec}s for them to return it)`);
+        track(state, t, 'heard', `${a.id} is courting you — court ${a.id} within ${CONFIG.courtWindowSec}s to accept, or ignore`);
+        interrupt(t, `courted by ${a.id}`);
+        logEvent(state, { kind: 'message', agentId: a.id, ok: true, text: `💗 ${a.id} courts ${t.id}` });
+        return ok(state, a, act, `courting ${t.id}`, false);
+      }
+      // Both chose each other.
+      for (const c of state.courtships) {
+        if (c.outcome === 'pending' && ((c.from === a.id && c.to === t.id) || (c.from === t.id && c.to === a.id))) {
+          c.outcome = 'mutual';
+          c.endedAt = state.time;
+        }
+      }
+      const r = tryBirth(state, a, t, rng);
+      const last = state.courtships.at(-1)!;
+      last.outcome = r.ok ? 'birth' : 'failed';
+      last.reason = r.ok ? undefined : r.detail;
+      a.courting = null;
+      t.courting = null;
+      track(state, t, 'heard', `${a.id} returned your courtship: ${r.detail}`, r.ok);
+      interrupt(t, r.ok ? 'became a parent' : 'courtship returned');
+      if (!r.ok) {
+        logEvent(state, { kind: 'message', agentId: a.id, ok: false, text: `💞 ${a.id} + ${t.id} chose each other — ${r.detail}` });
+        return fail(state, a, act, `you and ${t.id} chose each other, but ${r.detail}`);
+      }
+      void mateBlocker;
+      return ok(state, a, act, `you and ${t.id} chose each other: ${r.detail}`);
     }
 
     case 'craft': {

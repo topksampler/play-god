@@ -28,6 +28,12 @@ function Overview({ agent }: { agent: Agent }) {
         <br />
         capacity {b.capacity} · sight ×{b.senseMul} · speed ×{b.speedMul} · poison ×{b.poisonResist} · started energy {b.energy} / water {b.hydration}
       </div>
+      <h3>Life</h3>
+      <div className="kv">
+        generation {agent.generation}{agent.parents.length ? ` · parents ${agent.parents.join(' + ')}` : ' · founder'} · children {agent.children.join(', ') || 'none'}
+        {agent.courting && <> · 💗 courting {agent.courting.target}</>}
+        {agent.deathCause && <span className="err"> · died of {agent.deathCause}</span>}
+      </div>
       <h3>Body (0–100)</h3>
       <div className="grid2">
         <Sparkline title="Energy" points={s('energy')} color="#eb6834" max={100} />

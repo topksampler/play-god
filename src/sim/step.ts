@@ -4,6 +4,7 @@ import type { Agent, AgentMemory, Decision, SimCommand, Vec2, Weather, WorldEdit
 import { interrupt, recordOutcome, runAction } from './actions';
 import { nearStructure, senseRadius } from './environment';
 import { contextTags } from './communication';
+import { ageOf, stageOf, stepLife } from './life';
 import { blocked, clampToBounds, dist } from './geometry';
 import { addNode, addObstacle, biomeAt, createInitialWorld, logEvent, milestone, newId, type Rng, sampleFreeSpot, spawnAgents, track } from './world';
 import { NODES } from '../shared/catalog';
@@ -126,7 +127,10 @@ export function applyCommand(state: WorldState, cmd: SimCommand, rng: Rng, nextR
       return createInitialWorld(nextRunId(), state.defaultController, {
         seed: cmd.seed ?? state.seed,
         defaultTier: state.defaultTier,
-        experiment: { commMode: state.experiment.commMode, traits: state.experiment.traits, scarcity: state.experiment.scarcity, ...cmd.experiment },
+        experiment: {
+          commMode: state.experiment.commMode, traits: state.experiment.traits, scarcity: state.experiment.scarcity,
+          lifespanSec: state.experiment.lifespanSec, inheritance: state.experiment.inheritance, ...cmd.experiment,
+        },
       });
     case 'spawnAgents':
       spawnAgents(state, cmd.count, cmd.controller, cmd.tier ?? state.defaultTier, rng);
@@ -287,7 +291,7 @@ function stepBody(state: WorldState, a: Agent, dt: number, rng: Rng) {
   const fire = Boolean(nearStructure(state, a, 'campfire', CONFIG.campfireRadius));
   const storm = state.weather === 'storm' && !sheltered ? CONFIG.stormDrainMultiplier : 1;
   const sprinting = a.sprinting && Boolean(a.target) && a.stamina > 0;
-  const warm = fire ? 0.7 : 1;
+  const warm = (fire ? 0.7 : 1) * (stageOf(state, a) === 'elder' ? 1.3 : 1);
   const prev = { energy: a.energy, hydration: a.hydration, health: a.health };
 
   a.energy -= CONFIG.energyDrainPerSec * biome.energyDrainMul * storm * warm * (sprinting ? 1.5 : 1) * dt;
@@ -332,13 +336,15 @@ function stepBody(state: WorldState, a: Agent, dt: number, rng: Rng) {
   }
 
   if (a.health <= 0) {
+    a.deathCause ??= a.poisonedUntil > state.time ? 'poison' : a.energy <= 0 ? 'starvation' : a.hydration <= 0 ? 'dehydration' : 'injury';
     a.status = 'dead';
+    a.courting = null;
     a.plan = [];
     a.current = null;
     a.target = null;
     a.controller.needsDecision = false;
-    logEvent(state, { kind: 'death', agentId: a.id, ok: false, text: `${a.id} died (${a.stats.poisonings} poisonings, ate ${a.stats.eaten})` });
-    milestone(state, a, `Died after ${(state.time - a.bornAt).toFixed(0)}s`);
+    logEvent(state, { kind: 'death', agentId: a.id, ok: false, text: `✝ ${a.id} died of ${a.deathCause} at age ${ageOf(state, a).toFixed(0)}s (gen ${a.generation}, ${a.children.length} children)` });
+    milestone(state, a, `Died of ${a.deathCause} after ${(state.time - a.bornAt).toFixed(0)}s`);
   }
 }
 
@@ -373,6 +379,7 @@ function sample(state: WorldState) {
   state.history.push({
     t: state.time, food, water, materials, harmful, patches: Object.keys(state.resources).length,
     alive: agents.filter((a) => a.status !== 'dead').length, structures: Object.keys(state.structures).length,
+    births: state.births.length, generations: Math.max(0, ...agents.map((a) => a.generation)),
   });
   if (state.history.length > CONFIG.growthMax) state.history.shift();
   for (const a of agents) {
@@ -411,6 +418,7 @@ export function stepWorld(state: WorldState, dt: number, rng: Rng = Math.random)
     sample(state);
   }
   stepEcology(state, dt, rng);
+  stepLife(state);
   for (const m of Object.values(state.marks)) if (m.expiresAt <= state.time) delete state.marks[m.id];
   if (state.deliveries.length && state.time - state.deliveries[0].at > 3) state.deliveries.shift();
   for (const a of Object.values(state.agents)) {

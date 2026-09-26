@@ -33,6 +33,10 @@ export type ExperimentConfig = {
   traits: boolean;
   /** Food abundance: scales food patch counts and regrowth. */
   scarcity: 'abundant' | 'normal' | 'scarce';
+  /** Life cycle: agents age and die after lifespanSec (0 = immortal); births need mutual courtship. */
+  lifespanSec: number;
+  /** What offspring inherit besides traits: nothing, or their parents' beliefs (cultural transmission). */
+  inheritance: 'none' | 'beliefs';
   /** Proto-language sound inventory, generated per run (meaningless tokens). */
   lexicon: string[];
 };
@@ -64,6 +68,7 @@ export type Action =
   | { type: 'signal'; tokens: string[] }
   | { type: 'gesture'; gesture: GestureKind; toward?: Vec2 }
   | { type: 'mark'; glyph: string }
+  | { type: 'court'; agentId: string }
   | { type: 'craft'; recipe: RecipeKind }
   | { type: 'build'; structure: StructureKind; text?: string }
   | { type: 'cook'; itemId: string }
@@ -85,6 +90,7 @@ export type Decision = { plan: Action[]; memory?: AgentMemory; intent?: string }
 export type Outcome = { actionType: ActionType; ok: boolean; detail: string; at: number };
 export type Message = { id: string; senderId: string; text: string; sentAt: number };
 export type AgentStatus = 'active' | 'resting' | 'dead';
+export type LifeStage = 'child' | 'adult' | 'elder';
 
 export type Observation = {
   runId: string;
@@ -109,6 +115,16 @@ export type Observation = {
     currentAction: ActionType | null;
     planRemaining: number;
     traits: Trait[];
+    /** Life cycle. */
+    ageSec: number;
+    stage: LifeStage;
+    lifespanSec: number | null;
+    generation: number;
+    children: number;
+    /** Who is currently courting you (they chose you). */
+    courtedBy: string[];
+    /** Who you are courting, if anyone. */
+    courting: string | null;
     /** How this agent can communicate this run. `sounds` is its own (shuffled) view of the sound inventory. */
     voice: { mode: CommMode; sounds: string[] };
   };
@@ -120,6 +136,9 @@ export type Observation = {
     id: string; position: Vec2; distance: number; status: AgentStatus;
     /** What you can see them doing / holding right now (observable behaviour). */
     doing?: string; holding?: string[];
+    /** Visible cues for choosing partners (not exact numbers). */
+    stage: LifeStage; looks: 'healthy' | 'tired' | 'hurt' | 'weak'; appears: string[];
+    courtingYou?: boolean;
     gesture?: { kind: GestureKind; toward?: string };
   }[];
   visibleMarks: { id: string; glyph: string; position: Vec2; distance: number; ageSec: number }[];
@@ -171,6 +190,7 @@ export type GrowthSample = {
 
 export type WorldSample = {
   t: number; food: number; water: number; materials: number; harmful: number; patches: number; alive: number; structures: number;
+  births: number; generations: number;
 };
 
 export type ActiveAction = { action: Action; startedAt: number; progress: number };
@@ -213,6 +233,12 @@ export type Agent = {
     controller: ControllerKind; tier: AgentTier; commMode: CommMode; energy: number; hydration: number;
   };
   gesture: { kind: GestureKind; toward?: Vec2; until: number } | null;
+  generation: number;
+  parents: string[];
+  children: string[];
+  courting: { target: string; since: number; until: number } | null;
+  lastBirthAt: number;
+  deathCause: string | null;
   /** Last completed action, visible to others briefly ("eating dark blue berries"). */
   lastVisibleAct: { text: string; until: number } | null;
   turn: number;
@@ -267,6 +293,13 @@ export type Structure = {
   litUntil?: number;
 };
 
+/** Every courtship attempt and how it ended (mate-choice data). */
+export type Courtship = {
+  id: string; at: number; from: string; to: string;
+  outcome: 'pending' | 'mutual' | 'birth' | 'expired' | 'failed';
+  reason?: string; endedAt?: number;
+};
+
 export type Mark = { id: string; glyph: string; position: Vec2; by: string; at: number; expiresAt: number };
 export type Delivery = { at: number; from: string; to: string[]; channel: Utterance['channel'] };
 
@@ -304,6 +337,8 @@ export type WorldState = {
   marks: Record<string, Mark>;
   experiment: ExperimentConfig;
   utterances: Utterance[];
+  courtships: Courtship[];
+  births: { at: number; child: string; parents: string[] }[];
   /** Base rates: how often living agents are in each situation, sampled every few seconds (for lift). */
   contextBase: { samples: number; counts: Record<string, number> };
   /** Recent actual deliveries, for rendering comm lines. */

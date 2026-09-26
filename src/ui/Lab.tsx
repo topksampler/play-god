@@ -46,11 +46,83 @@ function download(world: WorldState) {
   URL.revokeObjectURL(url);
 }
 
+/** Mate choice + lineage, all from recorded courtships and births (truth). */
+function Life({ world }: { world: WorldState }) {
+  const cs = world.courtships;
+  const agents = Object.values(world.agents);
+  const by = (o: string) => cs.filter((c) => c.outcome === o).length;
+  const deaths = agents.filter((a) => a.status === 'dead');
+  const causes = deaths.reduce<Record<string, number>>((m, a) => ((m[a.deathCause ?? '?'] = (m[a.deathCause ?? '?'] ?? 0) + 1), m), {});
+  const suitors = new Map<string, { sent: number; returned: number; received: number; chosen: number }>();
+  const row = (id: string) => suitors.get(id) ?? (suitors.set(id, { sent: 0, returned: 0, received: 0, chosen: 0 }), suitors.get(id)!);
+  for (const c of cs) {
+    row(c.from).sent++;
+    row(c.to).received++;
+    if (c.outcome === 'birth' || c.outcome === 'mutual' || c.outcome === 'failed') {
+      row(c.from).returned++;
+      row(c.to).chosen++;
+    }
+  }
+  const alive = agents.filter((a) => a.status !== 'dead');
+  const gens = Math.max(0, ...agents.map((a) => a.generation));
+  const roots = agents.filter((a) => a.generation === 0);
+  const Tree = ({ id, depth }: { id: string; depth: number }): React.ReactElement => {
+    const a = world.agents[id];
+    if (!a) return <></>;
+    return (
+      <>
+        <div className="tree" style={{ paddingLeft: depth * 14 }}>
+          <i style={{ background: a.color }} /> {a.id}
+          {a.status === 'dead' ? ` ✝ ${a.deathCause}` : ''}
+          {a.parents.length ? <span className="small"> ← {a.parents.join(' + ')}</span> : null}
+          {a.traits.length ? <span className="small"> · {a.traits.join(',')}</span> : null}
+        </div>
+        {a.children.filter((c) => world.agents[c]?.parents[0] === id).map((c) => <Tree key={c} id={c} depth={depth + 1} />)}
+      </>
+    );
+  };
+  return (
+    <>
+      <h3>Life, mate choice & lineage</h3>
+      <div className="kv">
+        alive {alive.length} · births {world.births.length} · deaths {deaths.length}
+        {deaths.length > 0 && ` (${Object.entries(causes).map(([k, v]) => `${k} ${v}`).join(', ')})`} · generations {gens}
+        <br />
+        courtships {cs.length}: births {by('birth')} · chose each other but failed {by('failed')} · unreturned {by('expired')} · pending {by('pending')}
+        <br />
+        selectivity: {cs.length ? `${Math.round((by('expired') / Math.max(1, cs.length - by('pending'))) * 100)}% of resolved courtships were not returned` : '—'}
+      </div>
+      {suitors.size > 0 && (
+        <table className="tbl">
+          <thead>
+            <tr><td className="small">agent</td><td className="num small">courted others</td><td className="num small">returned</td><td className="num small">was courted</td><td className="num small">children</td></tr>
+          </thead>
+          <tbody>
+            {[...suitors.entries()].map(([id, r]) => (
+              <tr key={id}>
+                <td>{id}</td>
+                <td className="num">{r.sent}</td>
+                <td className="num">{r.returned}</td>
+                <td className="num">{r.received}</td>
+                <td className="num">{world.agents[id]?.children.length ?? 0}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="small" style={{ marginTop: 6 }}>family tree</div>
+      <div className="kv">{roots.map((r) => <Tree key={r.id} id={r.id} depth={0} />)}</div>
+    </>
+  );
+}
+
 export function Lab({ world }: { world: WorldState }) {
   const store = useSim();
   const [mode, setMode] = useState<CommMode>(world.experiment.commMode);
   const [traits, setTraits] = useState(world.experiment.traits);
   const [scarcity, setScarcity] = useState(world.experiment.scarcity);
+  const [lifespan, setLifespan] = useState(world.experiment.lifespanSec);
+  const [inheritance, setInheritance] = useState(world.experiment.inheritance);
   const [seed, setSeed] = useState(String(world.seed));
   const us = world.utterances;
 
@@ -157,18 +229,30 @@ export function Lab({ world }: { world: WorldState }) {
           <option value="normal">normal</option>
           <option value="scarce">scarce</option>
         </select>
+        <label className="small">lifespan</label>
+        <select value={lifespan} onChange={(e) => setLifespan(Number(e.target.value))}>
+          <option value={0}>immortal</option>
+          <option value={300}>5 min</option>
+          <option value={600}>10 min</option>
+          <option value={1200}>20 min</option>
+        </select>
+        <label className="small">children inherit</label>
+        <select value={inheritance} onChange={(e) => setInheritance(e.target.value as typeof inheritance)}>
+          <option value="none">traits only</option>
+          <option value="beliefs">traits + parents' beliefs</option>
+        </select>
       </div>
       <div className="row">
         <label className="small"><input type="checkbox" checked={traits} onChange={(e) => setTraits(e.target.checked)} /> heterogeneous traits</label>
         <label className="small">seed <input className="seed" value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, ''))} /></label>
         <button
-          onClick={() => store.dispatch({ type: 'reset', seed: Number(seed) || world.seed, experiment: { commMode: mode, traits, scarcity } })}
+          onClick={() => store.dispatch({ type: 'reset', seed: Number(seed) || world.seed, experiment: { commMode: mode, traits, scarcity, lifespanSec: lifespan, inheritance } })}
         >
           ▶ Start new run
         </button>
       </div>
       <div className="kv small">
-        running: <b>{world.experiment.commMode}</b> · food {world.experiment.scarcity} · traits {world.experiment.traits ? 'on' : 'off'} · seed {world.seed}
+        running: <b>{world.experiment.commMode}</b> · food {world.experiment.scarcity} · lifespan {world.experiment.lifespanSec ? `${world.experiment.lifespanSec / 60}m` : '∞'} · inherit {world.experiment.inheritance} · traits {world.experiment.traits ? 'on' : 'off'} · seed {world.seed}
         {world.experiment.commMode !== 'english' && <> · sound inventory: {world.experiment.lexicon.join(' ')}</>}
         {world.experiment.traits && (
           <>
@@ -181,6 +265,8 @@ export function Lab({ world }: { world: WorldState }) {
         Same model + same prompt for every agent means shared priors (Schelling points) can look like convention. Compare repeated runs and conditions before
         calling anything emergent. Contexts below are the speaker's actual situation (world truth), never shown to agents.
       </p>
+
+      <Life world={world} />
 
       <h3>Communicative acts</h3>
       <div className="grid2">

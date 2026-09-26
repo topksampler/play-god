@@ -394,10 +394,69 @@ describe('scarcity and control protocol', () => {
     const b = Object.keys(s.agents)[1];
     s.agents[b].position = { x: 3, z: 0 };
     node(s, 'berry_bush', { x: 2, z: 1 });
+    s.agents.a1.energy = 65; // below the scripted mating threshold
     const d = scriptedDecide(observe(s, 'a1'), rng);
     expect(d.plan[0]).toEqual({ type: 'signal', tokens: [[...s.experiment.lexicon].sort()[0]] });
   });
 });
+
+describe('life cycle and mate choice', () => {
+  const pair = (exp: Parameters<typeof createInitialWorld>[2] = {}) => {
+    const s = createInitialWorld('r', 'llm', { ...exp, experiment: { traits: true, inheritance: 'beliefs', ...exp.experiment } });
+    s.resources = {};
+    s.hazards = {};
+    s.obstacles = {};
+    s.agents.a1.position = { x: 0, z: 0 };
+    s.time = 10;
+    apply(s, { type: 'spawnAgents', count: 1, controller: 'llm' });
+    const b = Object.keys(s.agents)[1];
+    s.agents[b].position = { x: 1.5, z: 0 };
+    return { s, b };
+  };
+
+  it('a birth needs both to choose each other; a one-sided courtship expires', () => {
+    const { s, b } = pair();
+    plan(s, 'a1', [{ type: 'court', agentId: b }]);
+    run(s, 0.2);
+    expect(Object.keys(s.agents).length).toBe(2);
+    expect(s.agents[b].controller.interruptReason).toBe('courted by a1');
+    expect(observe(s, b).self.courtedBy).toEqual(['a1']);
+    run(s, CONFIG.courtWindowSec + 1);
+    expect(s.courtships[0].outcome).toBe('expired');
+    s.agents.a1.memory.beliefs = [{ appearance: 'murky greenish water', verdict: 'harmful' }];
+    plan(s, 'a1', [{ type: 'court', agentId: b }]);
+    run(s, 0.2);
+    plan(s, b, [{ type: 'court', agentId: 'a1' }]);
+    run(s, 0.2);
+    const kids = Object.values(s.agents).filter((a) => a.generation === 1);
+    expect(kids.length).toBe(1);
+    expect(kids[0].parents.sort()).toEqual(['a1', b].sort());
+    expect(kids[0].memory.beliefs[0].appearance).toBe('murky greenish water');
+    expect(s.agents.a1.children).toEqual([kids[0].id]);
+    expect(s.courtships.at(-1)?.outcome).toBe('birth');
+    expect(stageOfChild(s, kids[0].id)).toBe('child');
+  });
+
+  it('no offspring when a partner is too hungry; children cannot court', () => {
+    const { s, b } = pair();
+    s.agents[b].energy = 20;
+    plan(s, 'a1', [{ type: 'court', agentId: b }]);
+    run(s, 0.2);
+    plan(s, b, [{ type: 'court', agentId: 'a1' }]);
+    run(s, 0.2);
+    expect(Object.keys(s.agents).length).toBe(2);
+    expect(s.courtships.at(-1)).toMatchObject({ outcome: 'failed' });
+  });
+
+  it('agents die of old age at their lifespan', () => {
+    const { s } = pair({ experiment: { lifespanSec: 30 } });
+    run(s, 32);
+    expect(s.agents.a1.status).toBe('dead');
+    expect(s.agents.a1.deathCause).toBe('old age');
+  });
+});
+
+const stageOfChild = (s: WorldState, id: string) => observe(s, id).self.stage;
 
 describe('scripted baseline (labelled, not LLM)', () => {
   it('finds, gathers and eats food, and avoids red spotted mushrooms', () => {

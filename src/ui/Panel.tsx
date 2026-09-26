@@ -115,8 +115,10 @@ export function Panel({
               <Sparkline title="Harmful food/water" points={series('harmful')} color="#eb6834" />
               <Sparkline title="Materials (wood/stone/fiber)" points={series('materials')} color="#52514e" />
               <Sparkline title="Resource patches" points={series('patches')} color="#1baf7a" />
-              <Sparkline title="Agents alive" points={series('alive')} color="#2a78d6" max={CONFIG.maxAgents} />
+              <Sparkline title="Agents alive" points={series('alive')} color="#2a78d6" max={CONFIG.maxPopulation} />
               <Sparkline title="Structures built" points={series('structures')} color="#4a3aa7" />
+              <Sparkline title="Births (cumulative)" points={series('births')} color="#e87ba4" />
+              <Sparkline title="Generations" points={series('generations')} color="#e87ba4" />
             </div>
             <h3>God mode (direct buttons, not LLM)</h3>
             <div className="row">
