@@ -52,6 +52,23 @@ Result (seed 1337, 8 scripted agents, ~150 sim-seconds, run 2026-09-26):
 
 The `agent-close` association is expected: the control only signals when a peer is within 7 units. An earlier version computed base rates over utterances and **missed** this planted code (lift = 1 when one symbol dominates). That was fixed by sampling situations over time. Listener responses: 21% approached, 21% replied.
 
+## Pilot observations, 2026-09-26 (n = 1 run per cell: anecdotes, not results)
+
+Seed 1337, 6 founders, English, traits on, lifespan 5 min, children inherit beliefs, ~6 sim-minutes. Files in `runs/` (git-ignored). Open them with Lab → Load run.
+
+| | Haiku 4.5 (×2 runs) | Sonnet 5 |
+|---|---|---|
+| courtships | 0 and 0 (the second run added `lifeRemainingSec`) | 17 |
+| births | 0 → extinct at 300 s | 1 (a7 ← a2 + a4, keen eyes, 7 inherited beliefs), sole survivor |
+| belief accuracy vs truth | 97–98% | 100% |
+| communication | 4–6 speech acts: social check-ins, "shall we explore together?", a wood-trade request | 11 speech + 2 informational marks (`water@-19,-2`) |
+
+Sonnet run, qualitatively: a2 was courted 13 times (by a4 and a1) and chose a4 ("Accept a4's courtship and try to have offspring"). a1 tried to eat its way above the energy threshold "before I die of old age (58s left)". Agents used short repeated calls around courtship (`soro a2`, `soro a4, kosu gilu`).
+
+**Confound:** those calls used the proto sound inventory, which leaked into English-mode observations (fixed in `cb7f143`). So "Sonnet repurposes arbitrary tokens as mate calls" needs a clean re-run before it is claimed.
+
+Takeaways to test properly: model tier strongly changes reproductive behaviour (Haiku never courted, even with explicit remaining life), and courtship concentrated on one agent. Next: repeat each cell ≥3 seeds, add proto/silent, compare `inheritance: none` vs `beliefs`.
+
 ## Protocol suggestion
 
 1. Fix a seed. Run `english`, `proto` and `silent` with 5–8 agents for the same sim duration (use the speed control). Repeat each condition 3+ times with different seeds.
