@@ -4,8 +4,8 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import type { ObserveRequest, ObserveResponse } from '../src/shared/schemas';
 
-// The observer is the one place where depth beats speed; default to the most capable model.
-const observerModel = () => process.env.ANTHROPIC_OBSERVER_MODEL?.trim() || 'claude-opus-5-5';
+// Observer model: Sonnet by default (Opus was too costly for a periodic call); override with ANTHROPIC_OBSERVER_MODEL.
+const observerModel = () => process.env.ANTHROPIC_OBSERVER_MODEL?.trim() || 'claude-sonnet-5';
 
 /** Teammates' recorded pilot observations (docs/EMERGENCE.md), offered as extra cross-run evidence. */
 const PILOT = (() => {
