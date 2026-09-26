@@ -135,6 +135,11 @@ export function applyCommand(state: WorldState, cmd: SimCommand, rng: Rng, nextR
       if (!a) return state;
       a.controller.kind = cmd.controller;
       if (cmd.tier) a.controller.tier = cmd.tier;
+      // Before its first decision, a controller change is part of the agent's starting endowment.
+      if (a.turn === 0) {
+        a.baseline.controller = a.controller.kind;
+        a.baseline.tier = a.controller.tier;
+      }
       a.controller.lastError = null;
       a.controller.errorStreak = 0;
       a.controller.pending = false;

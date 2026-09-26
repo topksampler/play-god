@@ -104,3 +104,5 @@ button:disabled { opacity: 0.4; cursor: default; }
 .matrix td.sym { text-align: left; font-family: ui-monospace, monospace; background: none; font-weight: 600; }
 .matrix td.num { background: none; color: var(--text-secondary); }
 .matrix td.hot { color: #fff; font-weight: 600; }
+.follow { position: absolute; left: 8px; top: 40px; background: rgba(20,24,32,0.72); color: #fff; border: none; }
+.follow.on { background: #2a78d6; }

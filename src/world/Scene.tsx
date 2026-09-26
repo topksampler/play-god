@@ -1,7 +1,7 @@
 import { OrbitControls } from '@react-three/drei';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
-import { BufferAttribute, BufferGeometry, Color, type DirectionalLight, type Fog, type Group, type HemisphereLight, type LineSegments } from 'three';
+import { BufferAttribute, BufferGeometry, Color, type DirectionalLight, type Fog, type Group, type HemisphereLight, type LineSegments, type Vector3 } from 'three';
 import { CONFIG } from '../shared/config';
 import type { Agent } from '../shared/types';
 import { daylight, senseRadius } from '../sim/environment';
@@ -12,6 +12,7 @@ import { ResourceMesh } from './Resources';
 import { CommsLayer } from './Comms';
 import { Label } from './Label';
 import { Terrain } from './Terrain';
+import { Creature } from './Creature';
 
 const tierLabel = (a: Agent) => (a.controller.kind === 'llm' ? (a.controller.tier === 'smart' ? 'SONNET' : 'HAIKU') : a.controller.kind.toUpperCase());
 
@@ -27,39 +28,15 @@ function AgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: bool
     g.position.x += (a.position.x - g.position.x) * k;
     g.position.z += (a.position.z - g.position.z) * k;
     g.rotation.y = -a.heading + Math.PI / 2;
-    const ge = a.gesture && a.gesture.until > store.getState().time ? a.gesture.kind : null;
-    const t = performance.now() / 1000;
-    g.position.y = ge === 'jump' ? Math.abs(Math.sin(t * 7)) * 0.6 : 0;
-    g.scale.y = ge === 'crouch' ? 0.6 : 1;
-    g.rotation.z = ge === 'wave' || ge === 'beckon' ? Math.sin(t * 9) * 0.18 : 0;
   });
   const dead = agent.status === 'dead';
-  const resting = agent.status === 'resting';
   const c = agent.controller;
   const cond = [agent.poisonedUntil > store.getState().time && 'POISONED', agent.sickUntil > store.getState().time && 'SICK']
     .filter(Boolean)
     .join(' ');
   return (
     <group ref={ref} position={[agent.position.x, 0, agent.position.z]}>
-      <mesh
-        position={[0, dead ? 0.3 : 0.7, 0]}
-        rotation={dead ? [0, 0, Math.PI / 2] : [0, 0, 0]}
-        scale={resting ? [1, 0.7, 1] : [1, 1, 1]}
-        castShadow
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect();
-        }}
-      >
-        <capsuleGeometry args={[CONFIG.agentRadius, 0.5, 4, 12]} />
-        <meshStandardMaterial color={dead ? '#555' : agent.color} flatShading />
-      </mesh>
-      {!dead && (
-        <mesh position={[0, 0.95, CONFIG.agentRadius * 0.8]}>
-          <sphereGeometry args={[0.1, 8, 8]} />
-          <meshStandardMaterial color="#111" />
-        </mesh>
-      )}
+      <Creature agent={agent} onSelect={onSelect} />
       {agent.hasTorch && !dead && <pointLight position={[0, 1.6, 0]} color="#ffb347" intensity={3} distance={8} />}
       <Label
         position={[0, 2, 0]}
@@ -85,6 +62,26 @@ function TargetLine({ agent }: { agent: Agent }) {
       <meshBasicMaterial color={agent.color} transparent opacity={0.5} depthWrite={false} />
     </mesh>
   );
+}
+
+/** Smoothly keeps the orbit target on the selected agent (camera keeps its offset, so orbit/zoom still work). */
+function FollowCam({ agentId }: { agentId: string | null }) {
+  const store = useSim();
+  const controls = useThree((s) => s.controls) as unknown as { target: Vector3; update: () => void } | null;
+  const camera = useThree((s) => s.camera);
+  useFrame((_, dt) => {
+    const a = agentId ? store.getState().agents[agentId] : null;
+    if (!a || !controls) return;
+    const k = 1 - Math.exp(-dt * 3);
+    const dx = (a.position.x - controls.target.x) * k;
+    const dz = (a.position.z - controls.target.z) * k;
+    controls.target.x += dx;
+    controls.target.z += dz;
+    camera.position.x += dx;
+    camera.position.z += dz;
+    controls.update();
+  });
+  return null;
 }
 
 /** Day/night lighting and weather fog, driven by sim time every frame. */
@@ -177,7 +174,7 @@ function Rain() {
   );
 }
 
-function World({ selectedId, onSelect }: { selectedId: string | null; onSelect: (id: string | null) => void }) {
+function World({ selectedId, onSelect, follow }: { selectedId: string | null; onSelect: (id: string | null) => void; follow: boolean }) {
   const world = useWorldThrottled(200);
   const selected = selectedId ? world.agents[selectedId] : undefined;
   const size = CONFIG.worldSize;
@@ -233,12 +230,13 @@ function World({ selectedId, onSelect }: { selectedId: string | null; onSelect: 
       {Object.values(world.agents).map((a) => (
         <AgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />
       ))}
+      <FollowCam agentId={follow ? selectedId : null} />
       <OrbitControls makeDefault maxPolarAngle={Math.PI / 2.15} minDistance={5} maxDistance={120} target={[0, 0, 0]} />
     </>
   );
 }
 
-export function Scene(props: { selectedId: string | null; onSelect: (id: string | null) => void }) {
+export function Scene(props: { selectedId: string | null; onSelect: (id: string | null) => void; follow: boolean }) {
   return (
     <Canvas shadows camera={{ position: [0, 38, 34], fov: 50, far: 400 }}>
       <World {...props} />

@@ -19,6 +19,7 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>('a1');
   const [tab, setTab] = useState<DossierTab>('overview');
   const [focusSeq, setFocusSeq] = useState<number | null>(null);
+  const [follow, setFollow] = useState(false);
 
   useEffect(() => {
     const stopSim = store.start();
@@ -43,10 +44,13 @@ export function App() {
         <div className="main">
           <div className="viewport">
             <ErrorBoundary name="3D view">
-              <Scene selectedId={selectedId} onSelect={setSelectedId} />
+              <Scene selectedId={selectedId} onSelect={setSelectedId} follow={follow} />
             </ErrorBoundary>
             <Minimap selectedId={selectedId} onSelect={setSelectedId} />
             <Hud />
+            <button className={`follow ${follow ? 'on' : ''}`} onClick={() => setFollow((f) => !f)}>
+              🎥 {follow ? `following ${selectedId ?? '—'}` : 'follow selected'}
+            </button>
           </div>
           <ErrorBoundary name="Timeline">
             <WorldTimeline
