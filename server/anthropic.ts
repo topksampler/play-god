@@ -6,7 +6,7 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
 import { RECIPES, STRUCTURES } from '../src/shared/catalog';
 import { CONFIG } from '../src/shared/config';
-import { type DecideRequest, DecisionSchema } from '../src/shared/schemas';
+import { ActionSchema, type DecideRequest, DecisionSchema } from '../src/shared/schemas';
 import type { AgentTier, Decision } from '../src/shared/types';
 
 // In-world agents use small/fast models; the client picks a tier, never a raw model ID.
@@ -113,7 +113,7 @@ function toAction(s: Step): unknown {
   }
 }
 
-export type DecideResult = { decision: Decision; model: string; usage: { input: number; output: number; cacheRead: number; cacheWrite: number } };
+export type DecideResult = { decision: Decision; dropped: number; model: string; usage: { input: number; output: number; cacheRead: number; cacheWrite: number } };
 
 export async function decide(req: DecideRequest): Promise<DecideResult> {
   const model = modelFor(req.tier);
@@ -137,7 +137,11 @@ export async function decide(req: DecideRequest): Promise<DecideResult> {
   const out = response.parsed_output;
   if (!out) throw new Error('no structured output');
 
-  const plan = out.plan.slice(0, CONFIG.maxPlanLength).map(toAction);
+  // Keep valid steps; drop malformed ones (e.g. a gather with no id) instead of discarding the whole plan.
+  const steps = out.plan.slice(0, CONFIG.maxPlanLength).map(toAction);
+  const plan = steps.filter((s) => ActionSchema.safeParse(s).success);
+  const dropped = steps.length - plan.length;
+  if (steps.length && !plan.length) throw new Error(`all ${steps.length} plan steps were malformed`);
   const parsed = DecisionSchema.safeParse({
     plan: plan.length ? plan : [{ type: 'wait' }],
     intent: out.intent.slice(0, CONFIG.intentMaxChars),
@@ -154,6 +158,7 @@ export async function decide(req: DecideRequest): Promise<DecideResult> {
   const u = response.usage;
   return {
     decision: parsed.data,
+    dropped,
     model,
     usage: {
       input: u.input_tokens,

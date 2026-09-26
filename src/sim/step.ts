@@ -2,9 +2,9 @@ import { BIOMES, HAZARDS, ITEMS } from '../shared/catalog';
 import { CONFIG } from '../shared/config';
 import type { Agent, AgentMemory, Decision, SimCommand, Weather, WorldEdit, WorldState } from '../shared/types';
 import { interrupt, recordOutcome, runAction } from './actions';
-import { nearStructure } from './environment';
+import { nearStructure, senseRadius } from './environment';
 import { blocked, clampToBounds, dist } from './geometry';
-import { addNode, addObstacle, biomeAt, createInitialWorld, logEvent, newId, type Rng, sampleFreeSpot, spawnAgents } from './world';
+import { addNode, addObstacle, biomeAt, createInitialWorld, logEvent, milestone, newId, type Rng, sampleFreeSpot, spawnAgents, track } from './world';
 import { NODES } from '../shared/catalog';
 
 export { runAction };
@@ -22,8 +22,38 @@ function sanitizeMemory(m: AgentMemory): AgentMemory {
   };
 }
 
+const describeAction = (a: Decision['plan'][number]) => {
+  const { type, ...rest } = a as Record<string, unknown>;
+  const v = Object.values(rest)[0];
+  return v && typeof v === 'object' ? `${type}(${(v as { x: number }).x.toFixed(0)},${(v as { z: number }).z.toFixed(0)})` : v ? `${type} ${v}` : String(type);
+};
+
+/** Record what changed in the agent's self-authored memory (beliefs, places) on its timeline. */
+function trackMemoryChanges(state: WorldState, agent: Agent, next: AgentMemory) {
+  const prev = new Map(agent.memory.beliefs.map((b) => [b.appearance, b.verdict]));
+  for (const b of next.beliefs) {
+    const was = prev.get(b.appearance);
+    if (was === undefined) track(state, agent, 'memory', `new belief: "${b.appearance}" → ${b.verdict}`);
+    else if (was !== b.verdict) track(state, agent, 'memory', `changed belief: "${b.appearance}" ${was} → ${b.verdict}`);
+  }
+  const known = new Set(agent.memory.places.map((p) => p.label));
+  const added = next.places.filter((p) => !known.has(p.label));
+  if (added.length) track(state, agent, 'memory', `remembered ${added.map((p) => `${p.label} (${p.x.toFixed(0)},${p.z.toFixed(0)})`).join(', ')}`);
+  const forgotten = agent.memory.places.filter((p) => !next.places.some((q) => q.label === p.label));
+  if (forgotten.length) track(state, agent, 'memory', `forgot ${forgotten.map((p) => p.label).join(', ')}`);
+}
+
 function applyDecision(state: WorldState, agent: Agent, decision: Decision) {
-  if (decision.memory) agent.memory = sanitizeMemory(decision.memory);
+  agent.turn += 1;
+  track(
+    state, agent, 'turn',
+    `Turn ${agent.turn} · because ${agent.controller.interruptReason ?? 'scheduled'} → ${decision.plan.map(describeAction).join(' → ')}${decision.intent ? ` · intent: ${decision.intent}` : ''}`,
+  );
+  if (decision.memory) {
+    const next = sanitizeMemory(decision.memory);
+    trackMemoryChanges(state, agent, next);
+    agent.memory = next;
+  }
   agent.intent = decision.intent ? decision.intent.slice(0, CONFIG.intentMaxChars) : null;
   agent.controller.lastPlan = decision.plan;
   if (agent.status === 'dead') return;
@@ -141,6 +171,7 @@ export function applyCommand(state: WorldState, cmd: SimCommand, rng: Rng, nextR
       a.controller.errorStreak += 1;
       a.controller.lastPlan = [{ type: 'wait' }];
       logEvent(state, { kind: 'error', agentId: a.id, ok: false, text: `${a.id} decision failed: ${cmd.error}` });
+      track(state, a, 'error', `decision failed: ${cmd.error.slice(0, 160)}`, false);
       return state;
     }
   }
@@ -227,7 +258,8 @@ function damage(state: WorldState, a: Agent, amount: number, cause: string) {
   // Log and interrupt once per damage episode, not every tick.
   if (state.time - a.lastDamageAt > 3) {
     logEvent(state, { kind: 'hazard', agentId: a.id, ok: false, text: `${a.id} hurt by ${cause}` });
-    recordOutcome(state, a, a.current?.action.type ?? 'wait', false, `you are being hurt by ${cause}`, false);
+    recordOutcome(state, a, a.current?.action.type ?? 'wait', false, `you are being hurt by ${cause}`, false, false);
+    track(state, a, 'hurt', `hurt by ${cause} (health ${a.health.toFixed(0)})`, false);
     interrupt(a, `hurt by ${cause}`);
   }
   a.lastDamageAt = state.time;
@@ -276,7 +308,7 @@ function stepBody(state: WorldState, a: Agent, dt: number, rng: Rng) {
   // Carried food spoils.
   for (const i of a.items) {
     if (i.spoilsAt !== null && i.spoilsAt <= state.time && ITEMS[i.kind].spoilSec) {
-      recordOutcome(state, a, 'wait', false, `${i.label} [${i.id}] has gone rotten`, false);
+      recordOutcome(state, a, 'wait', false, `${i.label} [${i.id}] has gone rotten`, false, false);
       i.kind = 'rotten_food';
       i.label = `rotting ${i.label}`;
       i.spoilsAt = null;
@@ -290,6 +322,7 @@ function stepBody(state: WorldState, a: Agent, dt: number, rng: Rng) {
     a.target = null;
     a.controller.needsDecision = false;
     logEvent(state, { kind: 'death', agentId: a.id, ok: false, text: `${a.id} died (${a.stats.poisonings} poisonings, ate ${a.stats.eaten})` });
+    milestone(state, a, `Died after ${(state.time - a.bornAt).toFixed(0)}s`);
   }
 }
 
@@ -308,10 +341,57 @@ function stepPlan(state: WorldState, a: Agent, dt: number, rng: Rng) {
   }
 }
 
+const BIOME_NAMES: Record<string, string> = { meadow: 'the meadow', forest: 'the forest', lake: 'the lakeshore', highlands: 'the highlands', scrub: 'the scrubland', swamp: 'the swamp' };
+
+/** Periodic growth samples + exposure tracking (what each agent has perceived, where it has been). */
+function sample(state: WorldState) {
+  let food = 0, water = 0, materials = 0, harmful = 0;
+  for (const r of Object.values(state.resources)) {
+    const u = Math.floor(r.units);
+    if (r.kind === 'fresh_water') water++;
+    else if (r.kind === 'toxic_water' || r.kind === 'toxic_mushroom_patch') harmful += r.kind === 'toxic_water' ? 1 : u;
+    else if (r.kind === 'wood_pile' || r.kind === 'stone_pile' || r.kind === 'fiber_grass') materials += u;
+    else food += u;
+  }
+  const agents = Object.values(state.agents);
+  state.history.push({
+    t: state.time, food, water, materials, harmful, patches: Object.keys(state.resources).length,
+    alive: agents.filter((a) => a.status !== 'dead').length, structures: Object.keys(state.structures).length,
+  });
+  if (state.history.length > CONFIG.growthMax) state.history.shift();
+  for (const a of agents) {
+    if (a.status === 'dead') continue;
+    const biome = biomeAt(state, a.position);
+    if (!a.biomesVisited.includes(biome)) {
+      a.biomesVisited.push(biome);
+      if (a.biomesVisited.length > 1) milestone(state, a, `Entered ${BIOME_NAMES[biome]} for the first time`);
+    }
+    const r = senseRadius(state, a);
+    for (const n of Object.values(state.resources)) {
+      if (dist(n.position, a.position) > r) continue;
+      const look = NODES[n.kind].appearance;
+      if (!a.discovered.includes(look)) {
+        a.discovered.push(look);
+        if (a.discovered.length > 1) track(state, a, 'milestone', `Discovered: ${look}`);
+      }
+    }
+    a.growth.push({
+      t: state.time, energy: a.energy, hydration: a.hydration, health: a.health, stamina: a.stamina, items: a.items.length,
+      eaten: a.stats.eaten, distance: a.stats.distance, discoveries: a.discovered.length, beliefs: a.memory.beliefs.length,
+      places: a.memory.places.length, messages: a.messagesSent + a.messagesHeard,
+    });
+    if (a.growth.length > CONFIG.growthMax) a.growth.shift();
+  }
+}
+
 /** Advances the world by one fixed timestep. */
 export function stepWorld(state: WorldState, dt: number, rng: Rng = Math.random) {
   if (state.paused) return;
   state.time += dt;
+  if (state.time >= state.nextSampleAt) {
+    state.nextSampleAt = state.time + CONFIG.sampleEverySec;
+    sample(state);
+  }
   stepEcology(state, dt, rng);
   for (const a of Object.values(state.agents)) {
     if (a.status === 'dead') continue;

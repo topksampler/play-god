@@ -13,6 +13,9 @@ export type SimStore = {
   /** Apply queued commands and advance by dt seconds of fixed steps. */
   tick(dt: number): void;
   start(): () => void;
+  /** Simulation speed multiplier (0.25–4). Rendering is unaffected. */
+  getSpeed(): number;
+  setSpeed(x: number): void;
 };
 
 export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStore {
@@ -25,6 +28,7 @@ export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStor
   const subs = new Set<() => void>();
   const stepDt = 1 / CONFIG.tickHz;
   let acc = 0;
+  let speed = 1;
 
   const notify = () => {
     version++;
@@ -47,11 +51,16 @@ export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStor
     },
     tick(dt) {
       flush();
-      acc = Math.min(acc + dt, CONFIG.maxCatchUpSec); // cap catch-up after a tab stall
+      acc = Math.min(acc + dt * speed, CONFIG.maxCatchUpSec * speed); // cap catch-up after a tab stall
       while (acc >= stepDt) {
         stepWorld(state, stepDt, rng);
         acc -= stepDt;
       }
+      notify();
+    },
+    getSpeed: () => speed,
+    setSpeed(x) {
+      speed = Math.max(0.25, Math.min(4, x));
       notify();
     },
     start() {

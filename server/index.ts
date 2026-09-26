@@ -27,11 +27,11 @@ app.post('/api/decide', async (req, res) => {
   active++;
   const t0 = Date.now();
   try {
-    const { decision, model, usage } = await decide(parsed.data);
+    const { decision, model, usage, dropped } = await decide(parsed.data);
     const self = (parsed.data.observation as { self?: { id?: string } }).self;
     console.log(
       `[decide] ${self?.id ?? '?'} ${model} → ${decision.plan.map((p) => p.type).join(',')} ` +
-        `(${Date.now() - t0}ms, in ${usage.input} out ${usage.output} cache r${usage.cacheRead}/w${usage.cacheWrite})`,
+        `${dropped ? `(dropped ${dropped} malformed) ` : ''}(${Date.now() - t0}ms, in ${usage.input} out ${usage.output} cache r${usage.cacheRead}/w${usage.cacheWrite})`,
     );
     res.json(decision);
   } catch (e) {

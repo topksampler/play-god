@@ -1,7 +1,7 @@
 import { BIOMES, NODES } from '../shared/catalog';
 import { AGENT_COLORS, CONFIG } from '../shared/config';
 import type {
-  Agent, AgentMemory, AgentTier, Biome, BiomeKind, ControllerKind, NodeKind, Obstacle, ObstacleShape, SimEvent, Vec2, WorldState,
+  TimelineEntry, Agent, AgentMemory, AgentTier, Biome, BiomeKind, ControllerKind, NodeKind, Obstacle, ObstacleShape, SimEvent, Vec2, WorldState,
 } from '../shared/types';
 import { blocked, dist, obstacleDistance } from './geometry';
 import { mulberry32, type Rng } from './rng';
@@ -79,7 +79,31 @@ export function createAgent(state: WorldState, position: Vec2, controller: Contr
     stats: { eaten: 0, drank: 0, distance: 0, poisonings: 0, built: 0, damageTaken: 0 },
     lastDamageAt: -Infinity,
     stuckFor: 0,
+    bornAt: state.time,
+    turn: 0,
+    timeline: [],
+    growth: [],
+    discovered: [],
+    biomesVisited: [],
+    milestones: [],
+    actionCounts: {},
+    messagesSent: 0,
+    messagesHeard: 0,
   };
+}
+
+/** Append to an agent's timeline (bounded). */
+export function track(state: WorldState, a: Agent, kind: TimelineEntry['kind'], text: string, ok = true) {
+  state.eventSeq += 1;
+  a.timeline.push({ seq: state.eventSeq, at: state.time, turn: a.turn, kind, ok, text });
+  if (a.timeline.length > CONFIG.timelineMax) a.timeline.splice(0, a.timeline.length - CONFIG.timelineMax);
+}
+
+/** Record a first-time achievement once. */
+export function milestone(state: WorldState, a: Agent, text: string) {
+  if (a.milestones.some((m) => m.text === text) || a.milestones.length > 60) return;
+  a.milestones.push({ at: state.time, text });
+  track(state, a, 'milestone', text);
 }
 
 /** Bounded rejection sampling for a free spot. Returns null if none found. */
@@ -261,6 +285,8 @@ export function createInitialWorld(
     groundItems: {},
     events: [],
     eventSeq: 0,
+    history: [],
+    nextSampleAt: 0,
     idCounters: {},
   };
   generate(state, rng);

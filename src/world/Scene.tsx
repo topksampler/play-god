@@ -7,7 +7,8 @@ import type { Agent } from '../shared/types';
 import { daylight, senseRadius } from '../sim/environment';
 import { dist } from '../sim/geometry';
 import { useSim, useWorldThrottled } from '../sim/react';
-import { GroundItemMesh, HazardMesh, ObstacleMesh, ResourceMesh, StructureMesh } from './Entities';
+import { GroundItemMesh, HazardMesh, ObstacleMesh, StructureMesh } from './Entities';
+import { ResourceMesh } from './Resources';
 import { Label } from './Label';
 import { Terrain } from './Terrain';
 

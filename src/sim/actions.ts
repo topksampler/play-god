@@ -3,14 +3,29 @@ import { CONFIG } from '../shared/config';
 import type { ActionType, ActiveAction, Agent, Item, ItemKind, Vec2, WorldState } from '../shared/types';
 import { blocked, clampToBounds, dist, obstacleDistance } from './geometry';
 import { nearStructure, senseRadius } from './environment';
-import { biomeAt, logEvent, newId, type Rng } from './world';
+import { biomeAt, logEvent, milestone, newId, type Rng, track } from './world';
 import { BIOMES } from '../shared/catalog';
 
 export type ActionStatus = 'done' | 'ongoing' | 'failed';
 
-export function recordOutcome(state: WorldState, agent: Agent, actionType: ActionType, ok: boolean, detail: string, log = true) {
+const FIRSTS: Partial<Record<ActionType, string>> = {
+  gather: 'First gather', eat: 'First meal', drink: 'First drink', craft: 'First craft', build: 'First structure built',
+  cook: 'First cooked food', give: 'First gift given', say: 'First words spoken', inspect: 'First close inspection',
+  deposit: 'First item stored', rest: 'First rest', follow: 'First time following another creature',
+};
+
+export function recordOutcome(
+  state: WorldState, agent: Agent, actionType: ActionType, ok: boolean, detail: string, log = true, timeline = true,
+) {
   agent.recentOutcomes.push({ actionType, ok, detail, at: state.time });
   if (agent.recentOutcomes.length > CONFIG.recentOutcomes) agent.recentOutcomes.shift();
+  if (timeline) {
+    const c = (agent.actionCounts[actionType] ??= { ok: 0, fail: 0 });
+    if (ok) c.ok++;
+    else c.fail++;
+    track(state, agent, 'action', `${actionType}: ${detail}`, ok);
+    if (ok && FIRSTS[actionType] && c.ok === 1) milestone(state, agent, `${FIRSTS[actionType]} — ${detail.slice(0, 70)}`);
+  }
   if (log) logEvent(state, { kind: 'action', agentId: agent.id, ok, text: `${agent.id} ${actionType}: ${detail}` });
 }
 
@@ -171,6 +186,7 @@ function eatEffect(state: WorldState, a: Agent, item: Item, rng: Rng): string {
     a.poisonedUntil = Math.max(a.poisonedUntil, state.time + fx.poisonSec);
     a.stats.poisonings++;
     parts.push(`bitter aftertaste, then stomach cramps — you are POISONED for ${fx.poisonSec}s`);
+    track(state, a, 'hurt', `poisoned by ${item.label} (truth: ${item.kind})`, false);
     logEvent(state, { kind: 'hazard', agentId: a.id, ok: false, text: `${a.id} was poisoned by ${item.label} (${item.kind})` });
   }
   const sick = fx.sickSec && (fx.sickChance === undefined || rng() < fx.sickChance);
@@ -287,7 +303,8 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
       const item = takeItem(a, action.itemId)!;
       r.items.push(item);
       interrupt(r, `received ${item.label} from ${a.id}`);
-      recordOutcome(state, r, 'give', true, `received ${item.label} [${item.id}] from ${a.id}`, false);
+      recordOutcome(state, r, 'give', true, `received ${item.label} [${item.id}] from ${a.id}`, false, false);
+      track(state, r, 'heard', `received ${item.label} from ${a.id}`);
       return ok(state, a, act, `gave ${item.label} to ${r.id}`);
     }
 
@@ -342,10 +359,14 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
       for (const r of recipients) {
         r.inbox.push({ id, senderId: a.id, text, sentAt: state.time });
         if (r.inbox.length > CONFIG.inboxMax) r.inbox.shift();
+        r.messagesHeard++;
+        track(state, r, 'heard', `${a.id}: "${text}"`);
         interrupt(r, `message from ${a.id}`);
       }
       const to = recipients.map((r) => r.id).join(', ') || 'nobody in range';
-      recordOutcome(state, a, 'say', true, `said "${text}" → ${to}`, false);
+      a.messagesSent++;
+      track(state, a, 'said', `"${text}" → ${to}`, recipients.length > 0);
+      recordOutcome(state, a, 'say', true, `said "${text}" → ${to}`, false, false);
       logEvent(state, { kind: 'message', agentId: a.id, ok: recipients.length > 0, text: `${a.id} → ${to}: "${text}"` });
       return 'done';
     }

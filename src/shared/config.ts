@@ -36,6 +36,9 @@ export const CONFIG = {
   spreadRadius: 5,
   maxNodesPerKindPerBiome: 8,
   witherAfterSec: 90,
+  timelineMax: 400,
+  sampleEverySec: 5,
+  growthMax: 720,
   tickHz: 20,
   maxCatchUpSec: 0.25,
   /** Minimum gap between decisions for one agent, and max time before reconsidering a long plan. */

@@ -121,6 +121,20 @@ export type ControllerState = {
 export type Item = { id: string; kind: ItemKind; label: string; spoilsAt: number | null };
 
 /** The action currently executing (possibly still approaching its target). */
+/** Per-agent history, recorded by the simulator (truth), grouped by decision turn. */
+export type TimelineKind = 'turn' | 'action' | 'said' | 'heard' | 'memory' | 'milestone' | 'hurt' | 'error';
+export type TimelineEntry = { seq: number; at: number; turn: number; kind: TimelineKind; ok: boolean; text: string };
+
+/** Periodic samples for growth charts. */
+export type GrowthSample = {
+  t: number; energy: number; hydration: number; health: number; stamina: number;
+  items: number; eaten: number; distance: number; discoveries: number; beliefs: number; places: number; messages: number;
+};
+
+export type WorldSample = {
+  t: number; food: number; water: number; materials: number; harmful: number; patches: number; alive: number; structures: number;
+};
+
 export type ActiveAction = { action: Action; startedAt: number; progress: number };
 
 export type Agent = {
@@ -151,6 +165,17 @@ export type Agent = {
   lastDamageAt: number;
   /** Seconds spent unable to make progress toward target. */
   stuckFor: number;
+  bornAt: number;
+  turn: number;
+  timeline: TimelineEntry[];
+  growth: GrowthSample[];
+  /** Appearances this agent has ever perceived, and biomes it has entered (truth-side record of exposure). */
+  discovered: string[];
+  biomesVisited: BiomeKind[];
+  milestones: { at: number; text: string }[];
+  actionCounts: Partial<Record<ActionType, { ok: number; fail: number }>>;
+  messagesSent: number;
+  messagesHeard: number;
 };
 
 export type ResourceNode = {
@@ -226,6 +251,8 @@ export type WorldState = {
   groundItems: Record<string, GroundItem>;
   events: SimEvent[];
   eventSeq: number;
+  history: WorldSample[];
+  nextSampleAt: number;
   /** Per-prefix id counters (a1, a2… for agents; r1… for resources). */
   idCounters: Record<string, number>;
 };
