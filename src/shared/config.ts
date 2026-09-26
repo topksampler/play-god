@@ -1,0 +1,28 @@
+export const CONFIG = {
+  worldSize: 30,
+  senseRadius: 8,
+  commRadius: 6,
+  interactDistance: 1.5,
+  speed: 2,
+  agentRadius: 0.45,
+  maxEnergy: 100,
+  energyDrainPerSec: 0.5,
+  eatEnergy: 25,
+  inventoryCapacity: 3,
+  tickHz: 20,
+  maxCatchUpSec: 0.25,
+  decisionIntervalSec: 3,
+  maxConcurrentDecisions: 2,
+  decisionTimeoutMs: 20000,
+  maxAgents: 5,
+  memoryMaxChars: 500,
+  intentMaxChars: 120,
+  messageMaxChars: 200,
+  inboxMax: 10,
+  messageTtlSec: 30,
+  recentOutcomes: 5,
+  maxEvents: 200,
+  spawnAttempts: 200,
+} as const;
+
+export const AGENT_COLORS = ['#ff7a59', '#4cc9f0', '#b5e48c', '#f9c74f', '#c77dff', '#f28482'];
