@@ -28,6 +28,18 @@ export function scriptedDecide(obs: Observation, rng: () => number = Math.random
   if (self.stamina < 20 || self.health < 30) return say([{ type: 'rest' }], 'rest');
 
   const food = obs.visibleResources.find((r) => r.units > 0 && FOOD_NODE.test(r.appearance) && !AVOID.test(r.appearance));
+
+  // Hand-coded CONTROL protocol (proto mode only): the alphabetically-first sound means "food here".
+  // Scripted agents share this code by construction, so it calibrates the Lab's emergence metrics.
+  if (obs.self.voice.mode === 'proto' && obs.self.voice.sounds.length) {
+    const code = [...obs.self.voice.sounds].sort()[0];
+    const justSignalled = obs.recentOutcomes.slice(-2).some((o) => o.actionType === 'signal');
+    const someoneNear = obs.visibleAgents.some((a) => a.distance < 7 && a.status !== 'dead');
+    if (food && food.distance < 5 && someoneNear && !justSignalled) return say([{ type: 'signal', tokens: [code] }, { type: 'gather', nodeId: food.id }], `signal "${code}" (food) then gather`);
+    const heard = obs.messages.filter((m) => m.text === code && obs.observedAt - m.sentAt < 10).at(-1);
+    const speaker = heard && obs.visibleAgents.find((a) => a.id === heard.senderId);
+    if (speaker && !food && self.energy < 85) return say([{ type: 'follow', agentId: speaker.id }], `heard "${code}" from ${speaker.id}: go to them`);
+  }
   if (food && items.length < self.capacity && edible.length < 3) {
     return say([{ type: 'gather', nodeId: food.id }], `gather from ${food.id}`);
   }

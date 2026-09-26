@@ -59,6 +59,9 @@ export const traitMods = (traits: Trait[]) => ({
   poisonResist: traits.includes('hardy') ? 0.5 : 1,
 });
 
+const FOOD_KINDS = new Set<NodeKind>(['berry_bush', 'fruit_tree', 'mushroom_patch', 'fish_spot', 'cactus', 'honey_hive']);
+const SCARCITY = { abundant: { count: 1.5, regrow: 1.6 }, normal: { count: 1, regrow: 1 }, scarce: { count: 0.5, regrow: 0.4 } } as const;
+
 export const emptyMemory = (): AgentMemory => ({ notes: '', places: [], beliefs: [] });
 
 export function createAgent(state: WorldState, position: Vec2, controller: ControllerKind, tier: AgentTier, rng: Rng = Math.random): Agent {
@@ -197,9 +200,10 @@ export function spawnAgents(state: WorldState, count: number, controller: Contro
 export function addNode(state: WorldState, kind: NodeKind, position: Vec2) {
   const def = NODES[kind];
   const id = newId(state, 'r');
+  const regrow = FOOD_KINDS.has(kind) ? def.regrowPerMin * SCARCITY[state.experiment.scarcity].regrow : def.regrowPerMin;
   state.resources[id] = {
     id, kind, biome: biomeAt(state, position), position,
-    units: def.maxUnits, maxUnits: def.maxUnits, regrowPerMin: def.regrowPerMin, depletedSince: null,
+    units: def.maxUnits, maxUnits: def.maxUnits, regrowPerMin: regrow, depletedSince: null,
   };
   return id;
 }
@@ -260,7 +264,8 @@ function generate(state: WorldState, rng: Rng) {
         if (p) addObstacle(state, shape, p, rng);
       }
     }
-    for (const [kind, n] of def.nodes) {
+    for (const [kind, base] of def.nodes) {
+      const n = FOOD_KINDS.has(kind) ? Math.max(1, Math.round(base * SCARCITY[state.experiment.scarcity].count)) : base;
       for (let i = 0; i < n; i++) {
         let p: Vec2 | null;
         if (lake && (kind === 'fresh_water' || kind === 'fish_spot')) {
@@ -321,8 +326,14 @@ export function createInitialWorld(
     structures: {},
     groundItems: {},
     marks: {},
-    experiment: { commMode: opts.experiment?.commMode ?? 'english', traits: opts.experiment?.traits ?? false, lexicon },
+    experiment: {
+      commMode: opts.experiment?.commMode ?? 'english',
+      traits: opts.experiment?.traits ?? false,
+      scarcity: opts.experiment?.scarcity ?? 'normal',
+      lexicon,
+    },
     utterances: [],
+    contextBase: { samples: 0, counts: {} },
     deliveries: [],
     events: [],
     eventSeq: 0,
@@ -342,7 +353,7 @@ export function createInitialWorld(
     { x: 0, z: 0 };
   const first = createAgent(state, start, defaultController, state.defaultTier, rng);
   state.agents[first.id] = first;
-  logEvent(state, { kind: 'system', ok: true, text: `Run ${runId} started (seed ${seed}, comm ${state.experiment.commMode}${state.experiment.traits ? ', traits on' : ''})` });
+  logEvent(state, { kind: 'system', ok: true, text: `Run ${runId} started (seed ${seed}, comm ${state.experiment.commMode}, food ${state.experiment.scarcity}${state.experiment.traits ? ', traits on' : ''})` });
   logEvent(state, { kind: 'spawn', agentId: first.id, ok: true, text: `Spawned ${first.id} (${defaultController})` });
   return state;
 }

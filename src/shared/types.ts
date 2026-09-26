@@ -31,6 +31,8 @@ export type ExperimentConfig = {
   commMode: CommMode;
   /** Heterogeneous agents: each gets one random trait. */
   traits: boolean;
+  /** Food abundance: scales food patch counts and regrowth. */
+  scarcity: 'abundant' | 'normal' | 'scarce';
   /** Proto-language sound inventory, generated per run (meaningless tokens). */
   lexicon: string[];
 };
@@ -300,6 +302,8 @@ export type WorldState = {
   marks: Record<string, Mark>;
   experiment: ExperimentConfig;
   utterances: Utterance[];
+  /** Base rates: how often living agents are in each situation, sampled every few seconds (for lift). */
+  contextBase: { samples: number; counts: Record<string, number> };
   /** Recent actual deliveries, for rendering comm lines. */
   deliveries: Delivery[];
   events: SimEvent[];

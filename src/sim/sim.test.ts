@@ -347,6 +347,31 @@ describe('emergent communication conditions', () => {
   });
 });
 
+describe('scarcity and control protocol', () => {
+  it('scarce worlds have fewer food patches and slower regrowth', () => {
+    const food = (w: WorldState) => Object.values(w.resources).filter((r) => r.kind === 'berry_bush');
+    const n = createInitialWorld('r', 'scripted', { seed: 3 });
+    const sc = createInitialWorld('r', 'scripted', { seed: 3, experiment: { scarcity: 'scarce' } });
+    expect(food(sc).length).toBeLessThan(food(n).length);
+    expect(food(sc)[0].regrowPerMin).toBeLessThan(food(n)[0].regrowPerMin);
+  });
+
+  it('scripted control signals its fixed food code in proto mode when food and a peer are near', () => {
+    const s = createInitialWorld('r', 'scripted', { experiment: { commMode: 'proto' } });
+    s.resources = {};
+    s.hazards = {};
+    s.obstacles = {};
+    s.agents.a1.position = { x: 0, z: 0 };
+    s.time = 10;
+    apply(s, { type: 'spawnAgents', count: 1, controller: 'scripted' });
+    const b = Object.keys(s.agents)[1];
+    s.agents[b].position = { x: 3, z: 0 };
+    node(s, 'berry_bush', { x: 2, z: 1 });
+    const d = scriptedDecide(observe(s, 'a1'), rng);
+    expect(d.plan[0]).toEqual({ type: 'signal', tokens: [[...s.experiment.lexicon].sort()[0]] });
+  });
+});
+
 describe('scripted baseline (labelled, not LLM)', () => {
   it('finds, gathers and eats food, and avoids red spotted mushrooms', () => {
     const s = blank();

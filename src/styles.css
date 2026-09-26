@@ -106,3 +106,4 @@ button:disabled { opacity: 0.4; cursor: default; }
 .matrix td.hot { color: #fff; font-weight: 600; }
 .follow { position: absolute; left: 8px; top: 40px; background: rgba(20,24,32,0.72); color: #fff; border: none; }
 .follow.on { background: #2a78d6; }
+.matrix .baserow td { background: none; font-size: 10px; color: var(--text-muted); }

@@ -50,6 +50,7 @@ export function Lab({ world }: { world: WorldState }) {
   const store = useSim();
   const [mode, setMode] = useState<CommMode>(world.experiment.commMode);
   const [traits, setTraits] = useState(world.experiment.traits);
+  const [scarcity, setScarcity] = useState(world.experiment.scarcity);
   const [seed, setSeed] = useState(String(world.seed));
   const us = world.utterances;
 
@@ -104,9 +105,37 @@ export function Lab({ world }: { world: WorldState }) {
     return { byChannel, rows, base, total: us.length, resp, perMin, social };
   }, [us, us.length, world]);
 
+  /** How often living agents are in situation c at any time (sampled), not just when communicating. */
+  const baseRate = (c: string) => (world.contextBase.counts[c] ?? 0) / Math.max(1, world.contextBase.samples);
+
+  /**
+   * Cross-agent agreement: among users with ≥2 uses, the share whose most over-represented situation
+   * matches the most common such situation. 1.0 = everyone uses the symbol in the same kind of situation.
+   */
+  const agreement = (row: { speakers: Map<string, Map<string, number>> }) => {
+    const tops: string[] = [];
+    for (const ctx of row.speakers.values()) {
+      const uses = Math.max(...[...ctx.values(), 0]);
+      if (uses < 2) continue;
+      let best = '';
+      let bl = 0;
+      for (const [c, n] of ctx) {
+        const q = baseRate(c);
+        const l = q > 0 ? n / uses / q : 0;
+        if (l > bl) { bl = l; best = c; }
+      }
+      if (best) tops.push(best);
+    }
+    if (tops.length < 2) return null;
+    const counts = new Map<string, number>();
+    for (const t of tops) counts.set(t, (counts.get(t) ?? 0) + 1);
+    const [mode, n] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    return { share: n / tops.length, mode, users: tops.length };
+  };
+
   const lift = (row: { n: number; ctx: Map<string, number> }, c: string) => {
     const p = (row.ctx.get(c) ?? 0) / row.n;
-    const q = (stats.base.get(c) ?? 0) / Math.max(1, stats.total);
+    const q = baseRate(c);
     return q > 0 ? p / q : 0;
   };
 
@@ -122,16 +151,24 @@ export function Lab({ world }: { world: WorldState }) {
         </select>
       </div>
       <div className="row">
+        <label className="small">food</label>
+        <select value={scarcity} onChange={(e) => setScarcity(e.target.value as typeof scarcity)}>
+          <option value="abundant">abundant</option>
+          <option value="normal">normal</option>
+          <option value="scarce">scarce</option>
+        </select>
+      </div>
+      <div className="row">
         <label className="small"><input type="checkbox" checked={traits} onChange={(e) => setTraits(e.target.checked)} /> heterogeneous traits</label>
         <label className="small">seed <input className="seed" value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, ''))} /></label>
         <button
-          onClick={() => store.dispatch({ type: 'reset', seed: Number(seed) || world.seed, experiment: { commMode: mode, traits } })}
+          onClick={() => store.dispatch({ type: 'reset', seed: Number(seed) || world.seed, experiment: { commMode: mode, traits, scarcity } })}
         >
           ▶ Start new run
         </button>
       </div>
       <div className="kv small">
-        running: <b>{world.experiment.commMode}</b> · traits {world.experiment.traits ? 'on' : 'off'} · seed {world.seed}
+        running: <b>{world.experiment.commMode}</b> · food {world.experiment.scarcity} · traits {world.experiment.traits ? 'on' : 'off'} · seed {world.seed}
         {world.experiment.commMode !== 'english' && <> · sound inventory: {world.experiment.lexicon.join(' ')}</>}
         {world.experiment.traits && (
           <>
@@ -158,7 +195,7 @@ export function Lab({ world }: { world: WorldState }) {
       </div>
 
       <h3>Symbol × situation ({world.experiment.commMode === 'english' ? 'content words' : 'sounds & marks'})</h3>
-      <p className="small">Cell = times the symbol was used in that situation. Shaded when used there ≥1.5× more than the base rate (n ≥ 3).</p>
+      <p className="small">Cell = times the symbol was used in that situation. Shaded when that situation is ≥1.5× more common during the symbol than agents' overall time in it (base rate sampled every 5s; n ≥ 3). Hover a cell for lift.</p>
       <div className="matrix-wrap">
         <table className="matrix">
           <thead>
@@ -166,7 +203,15 @@ export function Lab({ world }: { world: WorldState }) {
               <th>symbol</th>
               <th>n</th>
               <th>users</th>
+              <th title="cross-agent agreement on the symbol's most over-represented situation (users with ≥2 uses)">agree</th>
               {CONTEXTS.map((c) => <th key={c} title={c}><span>{c}</span></th>)}
+            </tr>
+            <tr className="baserow">
+              <td className="sym small">base rate</td>
+              <td />
+              <td />
+              <td />
+              {CONTEXTS.map((c) => <td key={c} className="num">{Math.round(baseRate(c) * 100)}%</td>)}
             </tr>
           </thead>
           <tbody>
@@ -175,6 +220,9 @@ export function Lab({ world }: { world: WorldState }) {
                 <td className="sym">{w}</td>
                 <td className="num">{row.n}</td>
                 <td className="num">{row.speakers.size}</td>
+                <td className="num" title={(() => { const g = agreement(row); return g ? `${g.users} users; modal situation ${g.mode}` : 'needs ≥2 users with ≥2 uses'; })()}>
+                  {(() => { const g = agreement(row); return g ? `${Math.round(g.share * 100)}%` : '—'; })()}
+                </td>
                 {CONTEXTS.map((c) => {
                   const n = row.ctx.get(c) ?? 0;
                   const l = lift(row, c);

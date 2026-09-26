@@ -3,6 +3,7 @@ import { CONFIG } from '../shared/config';
 import type { Agent, AgentMemory, Decision, SimCommand, Vec2, Weather, WorldEdit, WorldState } from '../shared/types';
 import { interrupt, recordOutcome, runAction } from './actions';
 import { nearStructure, senseRadius } from './environment';
+import { contextTags } from './communication';
 import { blocked, clampToBounds, dist } from './geometry';
 import { addNode, addObstacle, biomeAt, createInitialWorld, logEvent, milestone, newId, type Rng, sampleFreeSpot, spawnAgents, track } from './world';
 import { NODES } from '../shared/catalog';
@@ -125,7 +126,7 @@ export function applyCommand(state: WorldState, cmd: SimCommand, rng: Rng, nextR
       return createInitialWorld(nextRunId(), state.defaultController, {
         seed: cmd.seed ?? state.seed,
         defaultTier: state.defaultTier,
-        experiment: { commMode: state.experiment.commMode, traits: state.experiment.traits, ...cmd.experiment },
+        experiment: { commMode: state.experiment.commMode, traits: state.experiment.traits, scarcity: state.experiment.scarcity, ...cmd.experiment },
       });
     case 'spawnAgents':
       spawnAgents(state, cmd.count, cmd.controller, cmd.tier ?? state.defaultTier, rng);
@@ -376,6 +377,8 @@ function sample(state: WorldState) {
   if (state.history.length > CONFIG.growthMax) state.history.shift();
   for (const a of agents) {
     if (a.status === 'dead') continue;
+    state.contextBase.samples++;
+    for (const c of contextTags(state, a)) state.contextBase.counts[c] = (state.contextBase.counts[c] ?? 0) + 1;
     const biome = biomeAt(state, a.position);
     if (!a.biomesVisited.includes(biome)) {
       a.biomesVisited.push(biome);
