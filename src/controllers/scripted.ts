@@ -1,26 +1,51 @@
-import { CONFIG } from '../shared/config';
-import type { Controller, Decision, Observation } from '../shared/types';
-
-const d = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
+import type { Action, Controller, Decision, Observation } from '../shared/types';
 
 /**
- * SCRIPTED baseline (not an LLM): eat when hungry and carrying, approach nearest visible food, take, otherwise explore.
+ * SCRIPTED baseline (hand-written heuristics, not an LLM). Uses only the observation.
+ * It carries a fixed "avoid" list of appearances, which LLM agents must instead learn from outcomes.
  */
+const AVOID = /red-capped|red spotted|murky|rotting/;
+const EDIBLE = /berries|fruit|mushroom|fish|honey|cactus/;
+const FOOD_NODE = /berries|fruit|brown-capped|cactus|fish/;
+
 export function scriptedDecide(obs: Observation, rng: () => number = Math.random): Decision {
   const { self } = obs;
-  if (self.inventory > 0 && self.energy <= CONFIG.maxEnergy - CONFIG.eatEnergy) {
-    return { action: { type: 'eat' }, intent: 'eat carried food' };
+  const say = (plan: Action[], intent: string): Decision => ({ plan, intent });
+  const items = self.items;
+  const edible = items.filter((i) => EDIBLE.test(i.label) && !AVOID.test(i.label));
+  const healer = items.find((i) => /herb|moss/.test(i.label));
+  const rotten = items.find((i) => !i.fresh);
+
+  if (rotten) return say([{ type: 'drop', itemId: rotten.id }], 'drop rotten food');
+  if ((self.health < 50 || self.conditions.length) && healer) return say([{ type: 'eat', itemId: healer.id }], 'heal');
+  if (self.hydration < 55) {
+    const water = obs.visibleResources.find((r) => /clear, cool water/.test(r.appearance));
+    const cactus = items.find((i) => /cactus/.test(i.label));
+    if (cactus) return say([{ type: 'eat', itemId: cactus.id }], 'quench thirst with cactus fruit');
+    if (water) return say([{ type: 'drink', sourceId: water.id }], 'drink');
   }
-  const food = [...obs.visibleFood].sort((a, b) => d(a.position, self.position) - d(b.position, self.position))[0];
-  if (food && self.inventory < CONFIG.inventoryCapacity) {
-    if (d(food.position, self.position) <= CONFIG.interactDistance * 0.9) {
-      return { action: { type: 'take', foodId: food.id }, intent: `take from ${food.id}` };
-    }
-    return { action: { type: 'move', target: food.position }, intent: `go to ${food.id}` };
+  if (self.energy < 70 && edible.length) return say([{ type: 'eat', itemId: edible[0].id }], 'eat');
+  if (self.stamina < 20 || self.health < 30) return say([{ type: 'rest' }], 'rest');
+
+  const food = obs.visibleResources.find((r) => r.units > 0 && FOOD_NODE.test(r.appearance) && !AVOID.test(r.appearance));
+  if (food && items.length < self.capacity && edible.length < 3) {
+    return say([{ type: 'gather', nodeId: food.id }], `gather from ${food.id}`);
   }
+  // Explore: pick a random nearby point, away from visible hazards.
   const { min, max } = obs.bounds;
-  const target = { x: min.x + 2 + rng() * (max.x - min.x - 4), z: min.z + 2 + rng() * (max.z - min.z - 4) };
-  return { action: { type: 'move', target }, intent: 'explore' };
+  let target = self.position;
+  for (let i = 0; i < 8; i++) {
+    const ang = rng() * Math.PI * 2;
+    const r = 6 + rng() * 10;
+    const t = {
+      x: Math.max(min.x + 2, Math.min(max.x - 2, self.position.x + Math.cos(ang) * r)),
+      z: Math.max(min.z + 2, Math.min(max.z - 2, self.position.z + Math.sin(ang) * r)),
+    };
+    const nearHazard = obs.visibleHazards.some((h) => Math.hypot(h.position.x - t.x, h.position.z - t.z) < h.radius + 1.5);
+    target = t;
+    if (!nearHazard) break;
+  }
+  return say([{ type: 'move', target }], 'explore');
 }
 
 export const scriptedController: Controller = {

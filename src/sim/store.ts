@@ -15,11 +15,11 @@ export type SimStore = {
   start(): () => void;
 };
 
-export function createSimStore(opts: { rng?: Rng } = {}): SimStore {
+export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStore {
   const rng = opts.rng ?? Math.random;
   let runCounter = 1;
   const nextRunId = () => `run-${++runCounter}`;
-  let state = createInitialWorld('run-1', 'scripted');
+  let state = createInitialWorld('run-1', 'scripted', { seed: opts.seed });
   let version = 0;
   const queue: SimCommand[] = [];
   const subs = new Set<() => void>();
@@ -49,7 +49,7 @@ export function createSimStore(opts: { rng?: Rng } = {}): SimStore {
       flush();
       acc = Math.min(acc + dt, CONFIG.maxCatchUpSec); // cap catch-up after a tab stall
       while (acc >= stepDt) {
-        stepWorld(state, stepDt);
+        stepWorld(state, stepDt, rng);
         acc -= stepDt;
       }
       notify();

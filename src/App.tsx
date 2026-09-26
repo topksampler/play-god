@@ -5,7 +5,10 @@ import type { HealthResponse } from './shared/schemas';
 import { SimContext } from './sim/react';
 import { createSimStore } from './sim/store';
 import { EventFeed } from './ui/EventFeed';
+import { Hud } from './ui/Hud';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import { Panel } from './ui/Panel';
+import { Minimap } from './world/Minimap';
 import { Scene } from './world/Scene';
 
 const store = createSimStore();
@@ -20,9 +23,9 @@ export function App() {
     fetchHealth().then((h) => {
       setHealth(h);
       if (h.llmConfigured) {
-        store.dispatch({ type: 'setDefaultController', controller: 'llm' });
+        store.dispatch({ type: 'setDefaultController', controller: 'llm', tier: 'fast' });
         for (const id of Object.keys(store.getState().agents))
-          store.dispatch({ type: 'setController', agentId: id, controller: 'llm' });
+          store.dispatch({ type: 'setController', agentId: id, controller: 'llm', tier: 'fast' });
       }
     });
     return () => {
@@ -35,10 +38,18 @@ export function App() {
     <SimContext.Provider value={store}>
       <div className="app">
         <div className="viewport">
-          <Scene selectedId={selectedId} onSelect={setSelectedId} />
-          <EventFeed />
+          <ErrorBoundary name="3D view">
+            <Scene selectedId={selectedId} onSelect={setSelectedId} />
+          </ErrorBoundary>
+          <ErrorBoundary name="Event feed">
+            <EventFeed />
+          </ErrorBoundary>
+          <Minimap selectedId={selectedId} onSelect={setSelectedId} />
+          <Hud />
         </div>
-        <Panel health={health} selectedId={selectedId} />
+        <ErrorBoundary name="Panel">
+          <Panel health={health} selectedId={selectedId} />
+        </ErrorBoundary>
       </div>
     </SimContext.Provider>
   );

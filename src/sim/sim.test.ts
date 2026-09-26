@@ -1,181 +1,312 @@
 import { describe, expect, it } from 'vitest';
 import { scriptedDecide } from '../controllers/scripted';
 import { startScheduler } from '../controllers/scheduler';
+import { NODES } from '../shared/catalog';
 import { CONFIG } from '../shared/config';
-import type { Controller, Decision, WorldState } from '../shared/types';
+import type { Action, Controller, Decision, NodeKind, SimCommand, Vec2, WorldState } from '../shared/types';
+import { senseRadius } from './environment';
+import { blocked } from './geometry';
 import { observe } from './observe';
+import { mulberry32 } from './rng';
 import { applyCommand, stepWorld } from './step';
 import { createSimStore } from './store';
-import { createInitialWorld } from './world';
+import { addNode, createInitialWorld } from './world';
 
-let seed = 42;
-const rng = () => {
-  // mulberry32
-  seed = (seed + 0x6d2b79f5) | 0;
-  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-};
+const rng = mulberry32(42);
 let runN = 1;
 const next = () => `run-t${++runN}`;
-const apply = (s: WorldState, c: Parameters<typeof applyCommand>[1]) => applyCommand(s, c, rng, next);
+const apply = (s: WorldState, c: SimCommand) => applyCommand(s, c, rng, next);
 
-function decide(s: WorldState, agentId: string, decision: Decision) {
+/** A generated world with everything cleared except agent a1 at the origin, for controlled tests. */
+function blank(): WorldState {
+  const s = createInitialWorld('r', 'scripted');
+  s.resources = {};
+  s.hazards = {};
+  s.obstacles = {};
+  s.agents.a1.position = { x: 0, z: 0 };
+  s.time = 10; // daytime
+  return s;
+}
+const node = (s: WorldState, kind: NodeKind, p: Vec2) => addNode(s, kind, p);
+function plan(s: WorldState, agentId: string, actions: Action[]) {
   const seq = s.agents[agentId].controller.requestSeq + 1;
   apply(s, { type: 'decisionStarted', agentId, runId: s.runId, seq, observation: observe(s, agentId) });
-  return apply(s, { type: 'decisionResult', agentId, runId: s.runId, seq, decision });
+  apply(s, { type: 'decisionResult', agentId, runId: s.runId, seq, decision: { plan: actions }, latencyMs: 1 });
 }
+const run = (s: WorldState, seconds: number) => {
+  for (let i = 0; i < seconds * 20; i++) stepWorld(s, 0.05, rng);
+};
+const last = (s: WorldState, id = 'a1') => s.agents[id].recentOutcomes.at(-1);
 
-describe('food rules', () => {
-  it('cannot collect the last unit twice', () => {
-    const s = createInitialWorld('r', 'scripted');
-    s.food.f1.units = 1;
+describe('world generation', () => {
+  it('is reproducible per seed and has biomes, resources, hazards, obstacles', () => {
+    const a = createInitialWorld('r', 'scripted', { seed: 7 });
+    const b = createInitialWorld('r', 'scripted', { seed: 7 });
+    expect(JSON.stringify(a.resources)).toBe(JSON.stringify(b.resources));
+    expect(new Set(a.biomes.map((x) => x.kind)).size).toBeGreaterThanOrEqual(6);
+    expect(Object.keys(a.resources).length).toBeGreaterThan(40);
+    expect(Object.keys(a.hazards).length).toBeGreaterThan(8);
+    expect(Object.keys(a.obstacles).length).toBeGreaterThan(30);
+    expect(blocked(a, a.agents.a1.position, CONFIG.agentRadius, 'a1')).toBe(false);
+  });
+});
+
+describe('gather / eat / drink', () => {
+  it('walks to a resource, gathers exactly one unit, never double-awarded', () => {
+    const s = blank();
+    const r = node(s, 'berry_bush', { x: 5, z: 0 });
+    s.resources[r].units = 1;
     apply(s, { type: 'spawnAgents', count: 1, controller: 'scripted' });
-    const [a, b] = Object.keys(s.agents);
-    s.agents[a].position = { x: 4, z: -2 };
-    s.agents[b].position = { x: 4, z: -4 };
-    decide(s, a, { action: { type: 'take', foodId: 'f1' } });
-    decide(s, b, { action: { type: 'take', foodId: 'f1' } });
-    expect(s.agents[a].inventory + s.agents[b].inventory).toBe(1);
-    expect(s.food.f1).toBeUndefined();
-    expect(s.agents[b].recentOutcomes.at(-1)?.ok).toBe(false);
+    const b = Object.keys(s.agents)[1];
+    s.agents[b].position = { x: 5, z: 1.2 };
+    plan(s, 'a1', [{ type: 'gather', nodeId: r }]);
+    plan(s, b, [{ type: 'gather', nodeId: r }]);
+    run(s, 4);
+    const total = s.agents.a1.items.length + s.agents[b].items.length;
+    expect(total).toBe(1);
+    expect(s.resources[r].units).toBeGreaterThanOrEqual(0);
   });
 
-  it('rejects out-of-range and guessed IDs', () => {
-    const s = createInitialWorld('r', 'scripted');
-    const a = 'a1';
-    decide(s, a, { action: { type: 'take', foodId: 'f3' } }); // far away
-    decide(s, a, { action: { type: 'take', foodId: 'nope' } });
-    expect(s.agents[a].inventory).toBe(0);
-    expect(s.food.f3.units).toBe(5);
+  it('rejects guessed/invisible ids and far targets', () => {
+    const s = blank();
+    const far = node(s, 'berry_bush', { x: 35, z: 35 });
+    plan(s, 'a1', [{ type: 'gather', nodeId: 'nope' }]);
+    run(s, 0.2);
+    expect(last(s)?.ok).toBe(false);
+    plan(s, 'a1', [{ type: 'gather', nodeId: far }]);
+    run(s, 0.2);
+    expect(last(s)).toMatchObject({ ok: false, detail: 'target is not in sight' });
+    expect(s.agents.a1.items.length).toBe(0);
   });
 
-  it('eat restores energy, clamped to max', () => {
-    const s = createInitialWorld('r', 'scripted');
-    const a = s.agents.a1;
-    a.position = { x: 4, z: -3 };
-    a.energy = 90;
-    decide(s, 'a1', { action: { type: 'take', foodId: 'f1' } });
-    decide(s, 'a1', { action: { type: 'eat' } });
-    expect(a.energy).toBe(CONFIG.maxEnergy);
-    expect(a.inventory).toBe(0);
-    decide(s, 'a1', { action: { type: 'eat' } });
-    expect(a.recentOutcomes.at(-1)).toMatchObject({ actionType: 'eat', ok: false });
+  it('poison comes from the true kind, and the agent only sees appearance', () => {
+    const s = blank();
+    const t = node(s, 'toxic_mushroom_patch', { x: 1, z: 0 });
+    const obs = observe(s, 'a1');
+    const seen = obs.visibleResources.find((r) => r.id === t)!;
+    expect(seen.appearance).toBe(NODES.toxic_mushroom_patch.appearance);
+    expect(JSON.stringify(obs)).not.toContain('toxic');
+    plan(s, 'a1', [{ type: 'gather', nodeId: t }]);
+    run(s, 1);
+    const item = s.agents.a1.items[0];
+    expect(item.label).toBe('red spotted mushroom');
+    plan(s, 'a1', [{ type: 'eat', itemId: item.id }]);
+    run(s, 0.1);
+    expect(s.agents.a1.poisonedUntil).toBeGreaterThan(s.time);
+    const h0 = s.agents.a1.health;
+    run(s, 3);
+    expect(s.agents.a1.health).toBeLessThan(h0);
   });
 
-  it('energy never goes negative; agent becomes exhausted', () => {
-    const s = createInitialWorld('r', 'scripted');
-    s.agents.a1.energy = 0.01;
-    for (let i = 0; i < 10; i++) stepWorld(s, 0.05);
+  it('toxic water hydrates but causes sickness; fresh water does not', () => {
+    const s = blank();
+    const bad = node(s, 'toxic_water', { x: 2, z: 0 });
+    s.agents.a1.hydration = 30;
+    plan(s, 'a1', [{ type: 'drink', sourceId: bad }]);
+    run(s, 2);
+    expect(s.agents.a1.hydration).toBeGreaterThan(45);
+    expect(s.agents.a1.sickUntil).toBeGreaterThan(s.time);
+  });
+
+  it('vitals clamp and the agent dies (shown, not deleted) at zero health', () => {
+    const s = blank();
+    s.agents.a1.energy = 0;
+    s.agents.a1.hydration = 0;
+    s.agents.a1.health = 1;
+    run(s, 2);
+    expect(s.agents.a1.status).toBe('dead');
     expect(s.agents.a1.energy).toBe(0);
-    expect(s.agents.a1.status).toBe('exhausted');
+    expect(s.agents.a1).toBeDefined();
+  });
+
+  it('food regrows up to maxUnits and carried food spoils', () => {
+    const s = blank();
+    const r = node(s, 'berry_bush', { x: 2, z: 0 });
+    s.resources[r].units = 0;
+    run(s, 30);
+    expect(s.resources[r].units).toBeGreaterThan(1);
+    run(s, 120);
+    expect(s.resources[r].units).toBe(s.resources[r].maxUnits);
+    plan(s, 'a1', [{ type: 'gather', nodeId: r }]);
+    run(s, 1);
+    run(s, 95);
+    expect(s.agents.a1.items[0].kind).toBe('rotten_food');
   });
 });
 
-describe('movement', () => {
-  it('stays in bounds and out of obstacles', () => {
-    const s = createInitialWorld('r', 'scripted');
-    decide(s, 'a1', { action: { type: 'move', target: { x: 0, z: 4 } } }); // obstacle o1 center
-    for (let i = 0; i < 200; i++) stepWorld(s, 0.05);
-    const p = s.agents.a1.position;
-    expect(Math.hypot(p.x - 0, p.z - 4)).toBeGreaterThanOrEqual(1.5 + CONFIG.agentRadius - 1e-6);
-    decide(s, 'a1', { action: { type: 'move', target: { x: 999, z: -999 } } });
-    for (let i = 0; i < 600; i++) stepWorld(s, 0.05);
-    expect(s.agents.a1.position.x).toBeLessThanOrEqual(15);
-    expect(s.agents.a1.position.z).toBeGreaterThanOrEqual(-15);
-  });
-
-  it('scripted controller reaches, takes and eats food (labelled baseline)', () => {
-    const s = createInitialWorld('r', 'scripted');
-    s.agents.a1.energy = 50;
-    for (let t = 0; t < 40; t++) {
-      decide(s, 'a1', scriptedDecide(observe(s, 'a1'), rng));
-      for (let i = 0; i < 20; i++) stepWorld(s, 0.05);
-      if (s.agents.a1.stats.eaten > 0) break;
-    }
-    expect(s.agents.a1.stats.eaten).toBeGreaterThan(0);
-    expect(s.food.f1.units).toBeLessThan(5);
+describe('ecology', () => {
+  it('full plants spread within their biome; stripped patches wither', () => {
+    const s = blank();
+    const r = node(s, 'berry_bush', { x: 4, z: 4 });
+    run(s, 300);
+    const bushes = Object.values(s.resources).filter((x) => x.kind === 'berry_bush');
+    expect(bushes.length).toBeGreaterThan(1);
+    expect(bushes.length).toBeLessThanOrEqual(CONFIG.maxNodesPerKindPerBiome);
+    const f = node(s, 'fiber_grass', { x: -4, z: -4 });
+    s.resources[f].regrowPerMin = 0;
+    s.resources[f].units = 0;
+    run(s, CONFIG.witherAfterSec + 15);
+    expect(s.resources[f]).toBeUndefined();
+    expect(s.resources[r]).toBeDefined();
   });
 });
 
-describe('agent isolation and staleness', () => {
+describe('movement and hazards', () => {
+  it('rectangular cliffs block movement', () => {
+    const s = blank();
+    s.obstacles.c = { id: 'c', shape: 'cliff', position: { x: 3, z: 0 }, radius: 0.9, halfLength: 8, angle: Math.PI / 2, height: 4, solid: true };
+    plan(s, 'a1', [{ type: 'move', target: { x: 6, z: 0 } }]);
+    run(s, 4);
+    expect(s.agents.a1.position.x).toBeLessThan(3 - 0.9);
+  });
+
+  it('hazards damage agents inside them and trigger a re-decision', () => {
+    const s = blank();
+    s.hazards.h = { id: 'h', kind: 'thorns', position: { x: 0, z: 0 }, radius: 3 };
+    s.agents.a1.controller.needsDecision = false;
+    run(s, 1);
+    expect(s.agents.a1.health).toBeLessThan(100);
+    expect(s.agents.a1.controller.needsDecision).toBe(true);
+  });
+
+  it('night shrinks the sense radius', () => {
+    const s = blank();
+    const day = senseRadius(s, s.agents.a1);
+    s.time = CONFIG.dayLengthSec * 0.75;
+    expect(senseRadius(s, s.agents.a1)).toBeCloseTo(day * CONFIG.nightVisionMultiplier, 5);
+  });
+});
+
+describe('crafting, building, caches', () => {
+  it('craft consumes exact inputs and fails visibly when short', () => {
+    const s = blank();
+    const a = s.agents.a1;
+    const mk = (kind: 'fiber' | 'wood' | 'stone', i: number) => ({ id: `x${kind}${i}`, kind, label: kind, spoilsAt: null });
+    a.items = [mk('fiber', 1), mk('fiber', 2)];
+    plan(s, 'a1', [{ type: 'craft', recipe: 'basket' }]);
+    run(s, 0.1);
+    expect(last(s)?.ok).toBe(false);
+    expect(a.items.length).toBe(2);
+    a.items.push(mk('fiber', 3));
+    plan(s, 'a1', [{ type: 'craft', recipe: 'basket' }]);
+    run(s, 0.1);
+    expect(a.capacity).toBe(CONFIG.basketCapacity);
+    expect(a.items.length).toBe(0);
+
+    a.items = [mk('wood', 1), mk('wood', 2), mk('wood', 3), mk('wood', 4)];
+    plan(s, 'a1', [{ type: 'build', structure: 'cache' }]);
+    run(s, 0.1);
+    const cache = Object.values(s.structures)[0];
+    expect(cache.kind).toBe('cache');
+    a.items = [mk('stone', 1)];
+    plan(s, 'a1', [{ type: 'deposit', cacheId: cache.id, itemId: 'xstone1' }]);
+    run(s, 1);
+    plan(s, 'a1', [{ type: 'withdraw', cacheId: cache.id, itemId: 'xstone1' }, { type: 'withdraw', cacheId: cache.id, itemId: 'xstone1' }]);
+    run(s, 1);
+    expect(a.items.filter((i) => i.id === 'xstone1').length).toBe(1);
+    expect(cache.items?.length).toBe(0);
+  });
+});
+
+describe('plans, isolation, staleness, messaging', () => {
+  it('executes a multi-step plan in order and flags completion', () => {
+    const s = blank();
+    const r = node(s, 'berry_bush', { x: 3, z: 0 });
+    s.agents.a1.energy = 40;
+    plan(s, 'a1', [{ type: 'gather', nodeId: r }, { type: 'gather', nodeId: r }]);
+    run(s, 3);
+    expect(s.agents.a1.items.length).toBe(2);
+    expect(s.agents.a1.controller.needsDecision).toBe(true);
+    expect(s.agents.a1.controller.interruptReason).toBe('plan complete');
+  });
+
   it('spawned agents have independent state and cap at max', () => {
     const s = createInitialWorld('r', 'scripted');
-    apply(s, { type: 'spawnAgents', count: 10, controller: 'scripted' });
+    apply(s, { type: 'spawnAgents', count: 20, controller: 'scripted' });
     const agents = Object.values(s.agents);
     expect(agents.length).toBe(CONFIG.maxAgents);
-    expect(new Set(agents.map((a) => a.id)).size).toBe(agents.length);
+    agents[0].memory.notes = 'secret';
     agents[0].inbox.push({ id: 'x', senderId: 'z', text: 'hi', sentAt: 0 });
-    agents[0].memory = 'secret';
+    expect(agents[1].memory.notes).toBe('');
     expect(agents[1].inbox.length).toBe(0);
-    expect(agents[1].memory).toBe('');
-    expect(agents[0].controller).not.toBe(agents[1].controller);
+    expect(agents[0].memory).not.toBe(agents[1].memory);
   });
 
-  it('rejects results from old runs and superseded requests', () => {
+  it('rejects results from old runs and after pause', () => {
     const s = createInitialWorld('r', 'scripted');
     apply(s, { type: 'decisionStarted', agentId: 'a1', runId: 'r', seq: 1, observation: observe(s, 'a1') });
     const s2 = apply(s, { type: 'reset' });
-    apply(s2, { type: 'decisionResult', agentId: 'a1', runId: 'r', seq: 1, decision: { action: { type: 'move', target: { x: 5, z: 5 } } } });
-    expect(s2.agents.a1.target).toBeNull();
+    apply(s2, { type: 'decisionResult', agentId: 'a1', runId: 'r', seq: 1, decision: { plan: [{ type: 'rest' }] }, latencyMs: 1 });
+    expect(s2.agents.a1.plan.length).toBe(0);
 
     const s3 = createInitialWorld('q', 'scripted');
     apply(s3, { type: 'decisionStarted', agentId: 'a1', runId: 'q', seq: 1, observation: observe(s3, 'a1') });
     apply(s3, { type: 'pause' });
-    apply(s3, { type: 'decisionResult', agentId: 'a1', runId: 'q', seq: 1, decision: { action: { type: 'move', target: { x: 5, z: 5 } } } });
-    expect(s3.agents.a1.target).toBeNull();
+    apply(s3, { type: 'decisionResult', agentId: 'a1', runId: 'q', seq: 1, decision: { plan: [{ type: 'rest' }] }, latencyMs: 1 });
+    expect(s3.agents.a1.plan.length).toBe(0);
   });
-});
 
-describe('messaging', () => {
-  it('delivers only within comm radius and expires by TTL', () => {
-    const s = createInitialWorld('r', 'scripted');
+  it('say delivers within comm radius only and expires by TTL', () => {
+    const s = blank();
     apply(s, { type: 'spawnAgents', count: 2, controller: 'scripted' });
     const [a, b, c] = Object.keys(s.agents);
-    s.agents[a].position = { x: 0, z: -10 };
-    s.agents[b].position = { x: 3, z: -10 };
-    s.agents[c].position = { x: 12, z: -10 };
-    decide(s, a, { action: { type: 'say', text: 'food at f1' } });
+    s.agents[b].position = { x: 3, z: 0 };
+    s.agents[c].position = { x: 20, z: 0 };
+    plan(s, a, [{ type: 'say', text: 'water to the north' }]);
+    run(s, 0.1);
     expect(s.agents[b].inbox.length).toBe(1);
+    expect(s.agents[b].controller.needsDecision).toBe(true);
     expect(s.agents[c].inbox.length).toBe(0);
-    for (let i = 0; i < (CONFIG.messageTtlSec + 1) * 20; i++) stepWorld(s, 0.05);
+    run(s, CONFIG.messageTtlSec + 1);
     expect(s.agents[b].inbox.length).toBe(0);
   });
 });
 
+describe('scripted baseline (labelled, not LLM)', () => {
+  it('finds, gathers and eats food, and avoids red spotted mushrooms', () => {
+    const s = blank();
+    node(s, 'toxic_mushroom_patch', { x: 2, z: 0 });
+    node(s, 'berry_bush', { x: 5, z: 2 });
+    s.agents.a1.energy = 50;
+    for (let t = 0; t < 30 && s.agents.a1.stats.eaten === 0; t++) {
+      plan(s, 'a1', scriptedDecide(observe(s, 'a1'), rng).plan);
+      run(s, 1.5);
+    }
+    expect(s.agents.a1.stats.eaten).toBeGreaterThan(0);
+    expect(s.agents.a1.stats.poisonings).toBe(0);
+  });
+});
+
 describe('scheduler', () => {
-  it('reset during an in-flight request discards the stale response', async () => {
-    const store = createSimStore({ rng });
-    let release!: (d: Decision) => void;
-    const slow: Controller = {
-      kind: 'llm',
-      decide: () => new Promise<Decision>((r) => (release = r)),
-    };
-    const stop = startScheduler(store, { resolve: () => slow, pollMs: 5 });
-    for (let i = 0; i < 10 && !release; i++) {
+  const waitFor = async (store: ReturnType<typeof createSimStore>, cond: () => boolean) => {
+    for (let i = 0; i < 40 && !cond(); i++) {
       store.tick(0.5);
       await new Promise((r) => setTimeout(r, 10));
     }
+  };
+
+  it('reset during an in-flight request discards the stale response', async () => {
+    const store = createSimStore({ rng });
+    let release: ((d: Decision) => void) | undefined;
+    const slow: Controller = { kind: 'llm', decide: () => new Promise<Decision>((r) => (release = r)) };
+    const stop = startScheduler(store, { resolve: () => slow, pollMs: 5 });
+    await waitFor(store, () => Boolean(release));
     expect(release).toBeTypeOf('function');
     store.dispatch({ type: 'reset' });
     store.tick(0.05);
-    release({ action: { type: 'move', target: { x: 10, z: 10 } } });
+    release!({ plan: [{ type: 'rest' }] });
     await new Promise((r) => setTimeout(r, 10));
     store.tick(0.05);
-    expect(store.getState().agents.a1.target).toBeNull();
+    expect(store.getState().agents.a1.current?.action.type).not.toBe('rest');
     stop();
   });
 
-  it('timeout-free API failure yields visible error and wait, without throwing', async () => {
+  it('API failure yields a visible error without throwing', async () => {
     const store = createSimStore({ rng });
     const failing: Controller = { kind: 'llm', decide: async () => { throw new Error('boom'); } };
     const stop = startScheduler(store, { resolve: () => failing, pollMs: 5 });
-    for (let i = 0; i < 20 && !store.getState().agents.a1.controller.lastError; i++) {
-      store.tick(0.5);
-      await new Promise((r) => setTimeout(r, 10));
-    }
+    await waitFor(store, () => Boolean(store.getState().agents.a1.controller.lastError));
     expect(store.getState().agents.a1.controller.lastError).toBe('boom');
-    expect(store.getState().agents.a1.controller.lastAction).toEqual({ type: 'wait' });
     stop();
   });
 });

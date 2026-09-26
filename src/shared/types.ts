@@ -2,50 +2,126 @@
 
 export type Vec2 = { x: number; z: number };
 export type ControllerKind = 'scripted' | 'llm' | 'fly';
+/** LLM model tier for in-world agents: fast = Haiku, smart = Sonnet (server maps tier → model). */
+export type AgentTier = 'fast' | 'smart';
+
+export type BiomeKind = 'meadow' | 'forest' | 'lake' | 'highlands' | 'scrub' | 'swamp';
+export type TimeOfDay = 'dawn' | 'day' | 'dusk' | 'night';
+export type Weather = 'clear' | 'cloudy' | 'rain' | 'storm';
+
+export type NodeKind =
+  | 'berry_bush' | 'fruit_tree' | 'mushroom_patch' | 'toxic_mushroom_patch' | 'fish_spot' | 'cactus'
+  | 'honey_hive' | 'herb_patch' | 'moss_patch' | 'wood_pile' | 'stone_pile' | 'fiber_grass'
+  | 'fresh_water' | 'toxic_water';
+
+export type ItemKind =
+  | 'berries' | 'fruit' | 'mushroom' | 'toxic_mushroom' | 'cooked_mushroom' | 'fish' | 'cooked_fish'
+  | 'cactus_fruit' | 'honey' | 'herb' | 'moss' | 'wood' | 'stone' | 'fiber' | 'rotten_food';
+
+export type HazardKind = 'thorns' | 'mud' | 'wasps' | 'snakes' | 'rockfall' | 'leeches';
+export type ObstacleShape = 'rock' | 'boulder' | 'tree' | 'log' | 'cliff' | 'bush' | 'lake';
+export type StructureKind = 'campfire' | 'shelter' | 'cache' | 'sign';
+export type RecipeKind = 'basket' | 'torch';
 
 export type Action =
-  | { type: 'move'; target: Vec2 }
-  | { type: 'take'; foodId: string }
-  | { type: 'eat' }
-  | { type: 'give'; recipientId: string }
+  | { type: 'move'; target: Vec2; sprint?: boolean }
+  | { type: 'follow'; agentId: string }
+  | { type: 'gather'; nodeId: string }
+  | { type: 'eat'; itemId: string }
+  | { type: 'drink'; sourceId: string }
+  | { type: 'drop'; itemId: string }
+  | { type: 'pickup'; groundItemId: string }
+  | { type: 'give'; recipientId: string; itemId: string }
+  | { type: 'rest' }
+  | { type: 'inspect'; targetId: string }
   | { type: 'say'; text: string }
+  | { type: 'craft'; recipe: RecipeKind }
+  | { type: 'build'; structure: StructureKind; text?: string }
+  | { type: 'cook'; itemId: string }
+  | { type: 'deposit'; cacheId: string; itemId: string }
+  | { type: 'withdraw'; cacheId: string; itemId: string }
   | { type: 'wait' };
+export type ActionType = Action['type'];
 
-export type Decision = { action: Action; memory?: string; intent?: string };
+/** Private, bounded, agent-authored memory. Beliefs are what the agent concluded, not verified truth. */
+export type AgentMemory = {
+  notes: string;
+  places: { label: string; x: number; z: number }[];
+  beliefs: { appearance: string; verdict: 'safe' | 'harmful' | 'unknown' }[];
+};
 
-export type Outcome = { actionType: Action['type']; ok: boolean; detail: string; at: number };
+/** A controller returns a short plan (1–3 actions) executed in order by the simulator. */
+export type Decision = { plan: Action[]; memory?: AgentMemory; intent?: string };
 
+export type Outcome = { actionType: ActionType; ok: boolean; detail: string; at: number };
 export type Message = { id: string; senderId: string; text: string; sentAt: number };
+export type AgentStatus = 'active' | 'resting' | 'dead';
 
 export type Observation = {
   runId: string;
   observedAt: number;
-  self: { id: string; position: Vec2; energy: number; inventory: number };
+  timeOfDay: TimeOfDay;
+  weather: Weather;
+  self: {
+    id: string;
+    position: Vec2;
+    biome: BiomeKind;
+    energy: number;
+    hydration: number;
+    health: number;
+    stamina: number;
+    conditions: string[];
+    status: AgentStatus;
+    /** Items as the agent perceives them (label), not their true kind. */
+    items: { id: string; label: string; fresh: boolean }[];
+    capacity: number;
+    hasTorch: boolean;
+    senseRadius: number;
+    currentAction: ActionType | null;
+    planRemaining: number;
+  };
   bounds: { min: Vec2; max: Vec2 };
-  visibleFood: { id: string; position: Vec2; units: number }[];
-  visibleAgents: { id: string; position: Vec2 }[];
-  visibleObstacles: { id: string; position: Vec2; radius: number }[];
+  visibleResources: { id: string; appearance: string; position: Vec2; distance: number; bearing: string; units: number }[];
+  visibleHazards: { id: string; appearance: string; position: Vec2; radius: number; distance: number }[];
+  visibleObstacles: { id: string; kind: ObstacleShape; position: Vec2; radius: number }[];
+  visibleAgents: { id: string; position: Vec2; distance: number; status: AgentStatus }[];
+  visibleStructures: {
+    id: string; kind: StructureKind; position: Vec2; distance: number; text?: string; lit?: boolean;
+    /** Cache contents, visible only when standing near the cache. */
+    contents?: { id: string; label: string }[];
+  }[];
+  visibleGroundItems: { id: string; label: string; position: Vec2; distance: number }[];
   messages: Message[];
-  recentOutcomes: { actionType: Action['type']; ok: boolean; detail: string }[];
+  recentOutcomes: { actionType: ActionType; ok: boolean; detail: string }[];
 };
 
 export interface Controller {
   kind: ControllerKind;
-  decide(input: { observation: Observation; memory: string }, signal: AbortSignal): Promise<Decision>;
+  decide(input: { observation: Observation; memory: AgentMemory; tier: AgentTier }, signal: AbortSignal): Promise<Decision>;
 }
-
-export type AgentStatus = 'active' | 'exhausted';
 
 /** Per-agent controller bookkeeping. Mutable only via sim commands. */
 export type ControllerState = {
   kind: ControllerKind;
+  tier: AgentTier;
   pending: boolean;
   requestSeq: number;
   lastError: string | null;
+  /** Consecutive failed decisions; drives retry backoff. */
+  errorStreak: number;
   lastDecisionAt: number | null;
-  lastAction: Action | null;
+  lastLatencyMs: number | null;
+  lastPlan: Action[] | null;
   lastObservation: Observation | null;
+  /** Set by the simulator when something happened that warrants an early re-decision. */
+  needsDecision: boolean;
+  interruptReason: string | null;
 };
+
+export type Item = { id: string; kind: ItemKind; label: string; spoilsAt: number | null };
+
+/** The action currently executing (possibly still approaching its target). */
+export type ActiveAction = { action: Action; startedAt: number; progress: number };
 
 export type Agent = {
   id: string;
@@ -53,26 +129,77 @@ export type Agent = {
   position: Vec2;
   heading: number;
   energy: number;
-  inventory: number;
+  hydration: number;
+  health: number;
+  stamina: number;
+  poisonedUntil: number;
+  sickUntil: number;
   status: AgentStatus;
   target: Vec2 | null;
-  memory: string;
+  sprinting: boolean;
+  items: Item[];
+  capacity: number;
+  hasTorch: boolean;
+  plan: Action[];
+  current: ActiveAction | null;
+  memory: AgentMemory;
   intent: string | null;
   inbox: Message[];
   recentOutcomes: Outcome[];
   controller: ControllerState;
-  stats: { eaten: number; distance: number };
+  stats: { eaten: number; drank: number; distance: number; poisonings: number; built: number; damageTaken: number };
+  lastDamageAt: number;
   /** Seconds spent unable to make progress toward target. */
   stuckFor: number;
 };
 
-export type FoodPatch = { id: string; position: Vec2; units: number };
-export type Obstacle = { id: string; shape: 'box' | 'cylinder'; position: Vec2; radius: number; height: number };
+export type ResourceNode = {
+  id: string;
+  kind: NodeKind;
+  biome: BiomeKind;
+  position: Vec2;
+  /** Fractional; whole units are available. */
+  units: number;
+  maxUnits: number;
+  regrowPerMin: number;
+  /** Sim time when units first hit 0 (for withering), or null. */
+  depletedSince: number | null;
+};
+
+export type Hazard = { id: string; kind: HazardKind; position: Vec2; radius: number };
+
+export type Obstacle = {
+  id: string;
+  shape: ObstacleShape;
+  position: Vec2;
+  /** Collision circle radius (circle shapes) or half-width (rect shapes). */
+  radius: number;
+  height: number;
+  /** Oriented rectangle for cliff/log: half-length along `angle`. */
+  halfLength?: number;
+  angle?: number;
+  /** Bushes are passable but slow. */
+  solid: boolean;
+};
+
+export type Structure = {
+  id: string;
+  kind: StructureKind;
+  position: Vec2;
+  builderId: string;
+  builtAt: number;
+  text?: string;
+  items?: Item[];
+  litUntil?: number;
+};
+
+export type GroundItem = { id: string; item: Item; position: Vec2; droppedBy: string };
+export type Biome = { id: string; kind: BiomeKind; site: Vec2 };
 
 export type SimEvent = {
   seq: number;
   at: number;
-  kind: 'spawn' | 'action' | 'error' | 'system' | 'edit';
+  kind: 'spawn' | 'action' | 'error' | 'system' | 'edit' | 'hazard' | 'death' | 'message' | 'weather' | 'ecology';
   agentId?: string;
   ok: boolean;
   text: string;
@@ -80,35 +207,47 @@ export type SimEvent = {
 
 export type WorldState = {
   runId: string;
+  seed: number;
   time: number;
   paused: boolean;
-  /** Controller kind for newly spawned agents; preserved across reset. */
+  /** Controller kind/tier for newly spawned agents; preserved across reset. */
   defaultController: ControllerKind;
+  defaultTier: AgentTier;
+  weather: Weather;
+  nextWeatherAt: number;
+  nextEcologyAt: number;
   bounds: { min: Vec2; max: Vec2 };
+  biomes: Biome[];
   agents: Record<string, Agent>;
-  food: Record<string, FoodPatch>;
+  resources: Record<string, ResourceNode>;
+  hazards: Record<string, Hazard>;
   obstacles: Record<string, Obstacle>;
+  structures: Record<string, Structure>;
+  groundItems: Record<string, GroundItem>;
   events: SimEvent[];
   eventSeq: number;
-  nextId: number;
+  /** Per-prefix id counters (a1, a2… for agents; r1… for resources). */
+  idCounters: Record<string, number>;
 };
 
-/** Allowlisted world edits (God mode, P1). Simulator validates execution. */
+/** Allowlisted world edits (God mode). Simulator validates execution. */
 export type WorldEdit =
-  | { type: 'add_food'; position: Vec2; units: number }
-  | { type: 'remove_food'; foodId: string }
-  | { type: 'add_obstacle'; position: Vec2; radius: number; shape: 'box' | 'cylinder' }
+  | { type: 'add_resource'; kind: NodeKind; position: Vec2 }
+  | { type: 'remove_resource'; nodeId: string }
+  | { type: 'add_obstacle'; shape: 'rock' | 'boulder' | 'tree'; position: Vec2; radius: number }
+  | { type: 'add_hazard'; kind: HazardKind; position: Vec2; radius: number }
+  | { type: 'set_weather'; weather: Weather }
   | { type: 'spawn_agents'; count: number; controller: ControllerKind };
 
 /** Commands accepted by the store. The only way to mutate world state. */
 export type SimCommand =
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'reset' }
-  | { type: 'spawnAgents'; count: number; controller: ControllerKind }
-  | { type: 'setController'; agentId: string; controller: ControllerKind }
-  | { type: 'setDefaultController'; controller: ControllerKind }
+  | { type: 'reset'; seed?: number }
+  | { type: 'spawnAgents'; count: number; controller: ControllerKind; tier?: AgentTier }
+  | { type: 'setController'; agentId: string; controller: ControllerKind; tier?: AgentTier }
+  | { type: 'setDefaultController'; controller: ControllerKind; tier?: AgentTier }
   | { type: 'edit'; edit: WorldEdit; source: string }
   | { type: 'decisionStarted'; agentId: string; runId: string; seq: number; observation: Observation }
-  | { type: 'decisionResult'; agentId: string; runId: string; seq: number; decision: Decision }
+  | { type: 'decisionResult'; agentId: string; runId: string; seq: number; decision: Decision; latencyMs: number }
   | { type: 'decisionError'; agentId: string; runId: string; seq: number; error: string };

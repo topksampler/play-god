@@ -6,58 +6,58 @@ export const Vec2Schema = z.object({ x: finite, z: finite });
 const id = z.string().min(1).max(64);
 
 export const ActionSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('move'), target: Vec2Schema }),
-  z.object({ type: z.literal('take'), foodId: id }),
-  z.object({ type: z.literal('eat') }),
-  z.object({ type: z.literal('give'), recipientId: id }),
+  z.object({ type: z.literal('move'), target: Vec2Schema, sprint: z.boolean().optional() }),
+  z.object({ type: z.literal('follow'), agentId: id }),
+  z.object({ type: z.literal('gather'), nodeId: id }),
+  z.object({ type: z.literal('eat'), itemId: id }),
+  z.object({ type: z.literal('drink'), sourceId: id }),
+  z.object({ type: z.literal('drop'), itemId: id }),
+  z.object({ type: z.literal('pickup'), groundItemId: id }),
+  z.object({ type: z.literal('give'), recipientId: id, itemId: id }),
+  z.object({ type: z.literal('rest') }),
+  z.object({ type: z.literal('inspect'), targetId: id }),
   z.object({ type: z.literal('say'), text: z.string().min(1).max(CONFIG.messageMaxChars) }),
+  z.object({ type: z.literal('craft'), recipe: z.enum(['basket', 'torch']) }),
+  z.object({
+    type: z.literal('build'),
+    structure: z.enum(['campfire', 'shelter', 'cache', 'sign']),
+    text: z.string().max(CONFIG.signMaxChars).optional(),
+  }),
+  z.object({ type: z.literal('cook'), itemId: id }),
+  z.object({ type: z.literal('deposit'), cacheId: id, itemId: id }),
+  z.object({ type: z.literal('withdraw'), cacheId: id, itemId: id }),
   z.object({ type: z.literal('wait') }),
 ]);
 
+export const MemorySchema = z.object({
+  notes: z.string().max(CONFIG.notesMaxChars),
+  places: z.array(z.object({ label: z.string().max(40), x: finite, z: finite })).max(CONFIG.maxPlaces),
+  beliefs: z
+    .array(z.object({ appearance: z.string().max(80), verdict: z.enum(['safe', 'harmful', 'unknown']) }))
+    .max(CONFIG.maxBeliefs),
+});
+
 export const DecisionSchema = z.object({
-  action: ActionSchema,
-  memory: z.string().max(CONFIG.memoryMaxChars).optional(),
+  plan: z.array(ActionSchema).min(1).max(CONFIG.maxPlanLength),
+  memory: MemorySchema.optional(),
   intent: z.string().max(CONFIG.intentMaxChars).optional(),
 });
 
-const actionType = z.enum(['move', 'take', 'eat', 'give', 'say', 'wait']);
-
-export const ObservationSchema = z.object({
-  runId: z.string().max(64),
-  observedAt: finite,
-  self: z.object({ id, position: Vec2Schema, energy: finite, inventory: z.number().int() }),
-  bounds: z.object({ min: Vec2Schema, max: Vec2Schema }),
-  visibleFood: z.array(z.object({ id, position: Vec2Schema, units: z.number().int() })).max(50),
-  visibleAgents: z.array(z.object({ id, position: Vec2Schema })).max(50),
-  visibleObstacles: z.array(z.object({ id, position: Vec2Schema, radius: finite })).max(50),
-  messages: z
-    .array(z.object({ id, senderId: id, text: z.string().max(CONFIG.messageMaxChars), sentAt: finite }))
-    .max(CONFIG.inboxMax),
-  recentOutcomes: z
-    .array(z.object({ actionType, ok: z.boolean(), detail: z.string().max(300) }))
-    .max(CONFIG.recentOutcomes),
-});
-
+/** The server validates observation shape loosely (it is only rendered into the prompt) but bounds its size. */
 export const DecideRequestSchema = z.object({
-  observation: ObservationSchema,
-  memory: z.string().max(CONFIG.memoryMaxChars),
+  tier: z.enum(['fast', 'smart']),
+  observation: z.record(z.string(), z.unknown()).refine((o) => JSON.stringify(o).length < 24000, 'observation too large'),
+  memory: MemorySchema,
 });
 
 export const WorldEditSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('add_food'), position: Vec2Schema, units: z.number().int().min(1).max(20) }),
-  z.object({ type: z.literal('remove_food'), foodId: id }),
-  z.object({
-    type: z.literal('add_obstacle'),
-    position: Vec2Schema,
-    radius: z.number().min(0.3).max(4),
-    shape: z.enum(['box', 'cylinder']),
-  }),
-  z.object({
-    type: z.literal('spawn_agents'),
-    count: z.number().int().min(1).max(CONFIG.maxAgents),
-    controller: z.enum(['scripted', 'llm']),
-  }),
+  z.object({ type: z.literal('add_resource'), kind: z.string(), position: Vec2Schema }),
+  z.object({ type: z.literal('remove_resource'), nodeId: id }),
+  z.object({ type: z.literal('add_obstacle'), shape: z.enum(['rock', 'boulder', 'tree']), position: Vec2Schema, radius: z.number().min(0.3).max(4) }),
+  z.object({ type: z.literal('add_hazard'), kind: z.enum(['thorns', 'mud', 'wasps', 'snakes', 'rockfall', 'leeches']), position: Vec2Schema, radius: z.number().min(0.5).max(6) }),
+  z.object({ type: z.literal('set_weather'), weather: z.enum(['clear', 'cloudy', 'rain', 'storm']) }),
+  z.object({ type: z.literal('spawn_agents'), count: z.number().int().min(1).max(CONFIG.maxAgents), controller: z.enum(['scripted', 'llm']) }),
 ]);
 
 export type DecideRequest = z.infer<typeof DecideRequestSchema>;
-export type HealthResponse = { llmConfigured: boolean; model: string | null; detail: string };
+export type HealthResponse = { llmConfigured: boolean; models: { fast: string; smart: string } | null; detail: string };
