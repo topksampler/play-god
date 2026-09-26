@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import Anthropic from '@anthropic-ai/sdk';
 import express from 'express';
-import { DecideRequestSchema, type HealthResponse } from '../src/shared/schemas';
+import { DecideRequestSchema, type HealthResponse, WorldCommandRequestSchema } from '../src/shared/schemas';
 import { credentialSource, decide, modelFor } from './anthropic';
+import { interpretWorldCommand } from './worldCommand';
 
 const app = express();
 app.use(express.json({ limit: '64kb' }));
@@ -45,8 +46,26 @@ app.post('/api/decide', async (req, res) => {
 });
 
 // Person B: natural-language world editing goes here (allowlisted WorldEdit, sim validates).
-app.post('/api/world-command', (_req, res) => {
-  res.status(501).json({ error: 'world-command not implemented yet' });
+// Natural-language God mode: the model may only emit allowlisted WorldEdits; the browser simulator validates and applies them.
+let commandActive = 0;
+app.post('/api/world-command', async (req, res) => {
+  if (!credentialSource()) return res.status(503).json({ error: 'LLM not configured: set ANTHROPIC_API_KEY on the server to use natural-language God mode (the direct God buttons still work)' });
+  const parsed = WorldCommandRequestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid world-command request' });
+  if (commandActive >= 2) return res.status(429).json({ error: 'server busy' });
+  commandActive++;
+  const t0 = Date.now();
+  try {
+    const result = await interpretWorldCommand(parsed.data);
+    console.log(`[world-command] "${parsed.data.text.slice(0, 80)}" → ${result.edits.map((e) => e.type).join(',') || 'no edits'} (${Date.now() - t0}ms)`);
+    res.json(result);
+  } catch (e) {
+    const msg = e instanceof Anthropic.APIError ? `API ${e.message}`.slice(0, 300) : (e as Error).message;
+    console.warn(`[world-command] error: ${msg}`);
+    res.status(502).json({ error: msg });
+  } finally {
+    commandActive--;
+  }
 });
 
 const port = Number(process.env.PORT) || 8787;

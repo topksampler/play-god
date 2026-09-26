@@ -1,9 +1,12 @@
 import { useState } from 'react';
+import { flyDriverStatus } from '../controllers/fly/driver';
 import { CONFIG } from '../shared/config';
 import type { HealthResponse } from '../shared/schemas';
-import type { AgentTier, ControllerKind, NodeKind, SimCommand } from '../shared/types';
+import type { Agent, AgentTier, ControllerKind, NodeKind, SimCommand } from '../shared/types';
 import { timeOfDay } from '../sim/environment';
 import { useSim, useWorldThrottled } from '../sim/react';
+import { populationLimit } from '../sim/world';
+import { GodCommand } from './GodCommand';
 import { Sparkline } from './charts/Sparkline';
 import { Dossier, type DossierTab } from './Dossier';
 import { EventFeed } from './EventFeed';
@@ -26,6 +29,66 @@ function Bar({ label, value, color }: { label: string; value: number; color: str
   );
 }
 
+function FlyBrainStatus() {
+  const st = flyDriverStatus();
+  if (st.state === 'idle') return null;
+  if (st.state === 'loading') return <div className="status warn">Loading connectome circuit into brain workers…</div>;
+  if (st.state === 'error') return <div className="status warn err">Fly brains unavailable: {st.error}</div>;
+  const slow = st.realtimeFactor < 1;
+  return (
+    <div className={`status ${slow ? 'warn' : 'ok'}`}>
+      {st.flies} fly brains on {st.workers} workers (capacity {st.capacity}) · brain speed {st.realtimeFactor.toFixed(2)}× real time
+      {slow && <div className="small">Brains are slower than real time, so the world runs in slow motion to keep every fly in step with its brain.</div>}
+      {st.lastError && <div className="small err">{st.lastError}</div>}
+    </div>
+  );
+}
+
+function FlyInspector({ agent, now }: { agent: Agent; now: number }) {
+  const f = agent.fly!;
+  const r = f.readout;
+  return (
+    <div className="inspector">
+      <div className="agent-head">
+        <h2 style={{ color: agent.color }}>{agent.id}</h2>
+        <span className={`pill ${agent.status === 'dead' ? 'harmful' : 'safe'}`}>{agent.status}</span>
+        <span className="small">connectome fly · brain {f.brainStatus} · age {f0(now - agent.bornAt)}s</span>
+      </div>
+      <h3>World truth (simulator)</h3>
+      <div className="grid2 tight">
+        <Bar label="energy" value={agent.energy} color="#eb6834" />
+        <Bar label="water" value={agent.hydration} color="#2a78d6" />
+        <Bar label="health" value={agent.health} color="#e34948" />
+      </div>
+      <div className="kv">
+        pos ({f1(agent.position.x)}, {f1(agent.position.z)}) · fed {agent.stats.eaten}× · drank {agent.stats.drank}× · dist {f0(agent.stats.distance)}
+        {agent.poisonedUntil > now && <span className="err"> · poisoned {f0(agent.poisonedUntil - now)}s</span>}
+        <br />
+        taste: {f.lastTaste && now - f.lastTaste.at < 0.3 ? `${f.lastTaste.sugar ? 'sugar/water ' : ''}${f.lastTaste.bitter ? 'bitter' : ''}` || 'neutral' : 'nothing'}
+        {f.feeding && ' · proboscis extended'}
+      </div>
+      <h3>Brain readouts (spikes from its own 5,966-neuron circuit)</h3>
+      {r ? (
+        <div className="kv">
+          DNa02 steering L {f0(r.dna02[0])} / R {f0(r.dna02[1])} Hz · DNa01 L {f0(r.dna01[0])} / R {f0(r.dna01[1])} Hz
+          <br />
+          MN9 proboscis motor neuron {f0(r.mn9)} Hz {f.feeding ? '→ feeding' : ''}
+          <br />
+          dopamine: PAM (reward) {f1(r.pam)} Hz · PPL1 (punishment) {f1(r.ppl1)} Hz
+          <br />
+          learned odor valence (own KC→MBON weight change) {r.valence.toFixed(3)}
+          <br />
+          steering signal {f1(r.steer)} Hz → turn {f1(f.turnRate)} rad/s · brain share of turning {f0(r.brainDriven * 100)}%
+        </div>
+      ) : (
+        <div className="kv">waiting for first brain tick…</div>
+      )}
+      <div className="small">Body-level rules (not neural): walking speed, exploratory turning noise, collision side-step, hunger gain on sensory input.</div>
+      {agent.controller.lastError && <div className="err small">brain error: {agent.controller.lastError}</div>}
+    </div>
+  );
+}
+
 export function Panel({
   health, selectedId, onSelect, tab, setTab, focusSeq,
 }: {
@@ -40,7 +103,9 @@ export function Panel({
   const world = useWorldThrottled(400);
   const [view, setView] = useState<'world' | 'agent' | 'lab'>('agent');
   const agents = Object.values(world.agents);
-  const count = agents.length;
+  const count = agents.filter((a) => a.status !== 'dead').length;
+  const flyMode = world.mode === 'flies';
+  const limit = populationLimit(world);
   const agent = selectedId ? world.agents[selectedId] : undefined;
   const llm = Boolean(health?.llmConfigured);
   const modes: Mode[] = llm ? ['llm:fast', 'llm:smart', 'scripted'] : ['scripted'];
@@ -63,10 +128,28 @@ export function Panel({
     <div className="panel">
       <div className="panel-top">
         <h1>Let's Play God</h1>
-        <div className={`status ${llm ? 'ok' : 'warn'}`}>
-          {health ? health.detail : 'checking server…'}
-          {!llm && <div className="small">LLM unavailable — only the labelled SCRIPTED baseline can run.</div>}
+        <div className="modes" role="tablist">
+          <button className={flyMode ? '' : 'on'} onClick={() => { if (flyMode) { edit({ type: 'reset', mode: 'agents' }); onSelect('a1'); } }}>
+            LLM agents
+          </button>
+          <button className={flyMode ? 'on' : ''} onClick={() => { if (!flyMode) { edit({ type: 'reset', mode: 'flies' }); onSelect('f1'); } }}>
+            Fruit flies (connectome)
+          </button>
         </div>
+        {flyMode ? (
+          <>
+            <div className="small">
+              Each fly runs its own spiking model of 5,966 FlyWire neurons (whole-brain model of Shiu et al., pruned to the neurons its senses reach). Odor steers it via
+              DNa01/DNa02, sugar drives MN9 feeding, and dopamine-gated plasticity in its own mushroom body makes it learn from what it tastes.
+            </div>
+            <FlyBrainStatus />
+          </>
+        ) : (
+          <div className={`status ${llm ? 'ok' : 'warn'}`}>
+            {health ? health.detail : 'checking server…'}
+            {!llm && <div className="small">LLM unavailable — only the labelled SCRIPTED baseline can run.</div>}
+          </div>
+        )}
         <div className="row">
           {world.paused ? <button onClick={() => edit({ type: 'resume' })}>▶ Resume</button> : <button onClick={() => edit({ type: 'pause' })}>⏸ Pause</button>}
           <button onClick={() => edit({ type: 'reset' })}>Reset</button>
@@ -76,17 +159,28 @@ export function Panel({
             <button key={x} className={`chip-btn ${speed === x ? 'on' : ''}`} onClick={() => store.setSpeed(x)}>{x}×</button>
           ))}
         </div>
-        <div className="row">
-          <select value={modeOf(world.defaultController, world.defaultTier)} onChange={(e) => edit({ type: 'setDefaultController', ...parseMode(e.target.value as Mode) })}>
-            {modes.map((m) => <option key={m} value={m}>new: {modeLabel(m)}</option>)}
-          </select>
-          {[1, 3].map((n) => (
-            <button key={n} disabled={count >= CONFIG.maxAgents} onClick={() => edit({ type: 'spawnAgents', count: n, controller: world.defaultController, tier: world.defaultTier })}>
-              Spawn {n}
-            </button>
-          ))}
-          <span className="small">{count}/{CONFIG.maxAgents}</span>
-        </div>
+        {flyMode ? (
+          <div className="row">
+            {[1, 5, 10].map((n) => (
+              <button key={n} disabled={count >= limit} onClick={() => edit({ type: 'spawnAgents', count: n, controller: 'fly' })}>
+                Spawn {n} {n === 1 ? 'fly' : 'flies'}
+              </button>
+            ))}
+            <span className="small">{count}/{limit}</span>
+          </div>
+        ) : (
+          <div className="row">
+            <select value={modeOf(world.defaultController, world.defaultTier)} onChange={(e) => edit({ type: 'setDefaultController', ...parseMode(e.target.value as Mode) })}>
+              {modes.map((m) => <option key={m} value={m}>new: {modeLabel(m)}</option>)}
+            </select>
+            {[1, 3].map((n) => (
+              <button key={n} disabled={count >= limit} onClick={() => edit({ type: 'spawnAgents', count: n, controller: world.defaultController, tier: world.defaultTier })}>
+                Spawn {n}
+              </button>
+            ))}
+            <span className="small">{count}/{limit}</span>
+          </div>
+        )}
         <div className="agent-chips">
           {agents.map((a) => (
             <button key={a.id} className={`agent-chip ${a.id === selectedId ? 'on' : ''}`} onClick={() => { onSelect(a.id); setView('agent'); }}>
@@ -120,6 +214,8 @@ export function Panel({
               <Sparkline title="Births (cumulative)" points={series('births')} color="#e87ba4" />
               <Sparkline title="Generations" points={series('generations')} color="#e87ba4" />
             </div>
+            <h3>God mode — natural language (LLM, allowlisted edits)</h3>
+            <GodCommand store={store} selectedId={selectedId} llm={llm} />
             <h3>God mode (direct buttons, not LLM)</h3>
             <div className="row">
               {(['clear', 'rain', 'storm'] as const).map((w) => (
@@ -131,6 +227,7 @@ export function Panel({
               <button onClick={() => addNear('berry_bush')}>+berries</button>
               <button onClick={() => addNear('fruit_tree')}>+fruit tree</button>
               <button onClick={() => addNear('fresh_water')}>+water</button>
+              <button onClick={() => addNear('mushroom_patch')}>+brown shrooms</button>
               <button onClick={() => addNear('toxic_mushroom_patch')}>+toxic shrooms</button>
               <button onClick={() => edit({ type: 'edit', source: 'God button', edit: { type: 'add_hazard', kind: 'thorns', position: around(), radius: 2 } })}>+thorns</button>
             </div>
@@ -139,7 +236,8 @@ export function Panel({
           </>
         )}
 
-        {showAgent && agent && (
+        {showAgent && agent?.fly && <FlyInspector agent={agent} now={world.time} />}
+        {showAgent && agent && !agent.fly && (
           <div className="inspector">
             <div className="agent-head">
               <h2 style={{ color: agent.color }}>{agent.id}</h2>

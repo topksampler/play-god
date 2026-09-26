@@ -13,6 +13,7 @@ import { CommsLayer } from './Comms';
 import { Label } from './Label';
 import { Terrain } from './Terrain';
 import { Creature } from './Creature';
+import { FlyModel } from './FlyModel';
 
 const tierLabel = (a: Agent) => (a.controller.kind === 'llm' ? (a.controller.tier === 'smart' ? 'SONNET' : 'HAIKU') : a.controller.kind.toUpperCase());
 
@@ -50,6 +51,50 @@ function AgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: bool
           ...(agent.courting && agent.courting.until > store.getState().time && !dead ? [`💗 → ${agent.courting.target}`] : []),
         ]}
       />
+    </group>
+  );
+}
+
+const r5 = (v: number) => Math.round(v / 5) * 5;
+
+/** A connectome-driven fruit fly. Only the selected fly gets a stats label, to keep 40+ flies cheap to draw. */
+function FlyAgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: boolean; onSelect: () => void }) {
+  const store = useSim();
+  const ref = useRef<Group>(null);
+  useFrame((_, dt) => {
+    const a = store.getState().agents[agent.id];
+    const g = ref.current;
+    if (!a || !g) return;
+    const k = 1 - Math.exp(-dt * 12);
+    g.position.x += (a.position.x - g.position.x) * k;
+    g.position.z += (a.position.z - g.position.z) * k;
+    g.rotation.y = -a.heading + Math.PI / 2;
+  });
+  const f = agent.fly!;
+  const dead = agent.status === 'dead';
+  return (
+    <group ref={ref} position={[agent.position.x, 0, agent.position.z]}>
+      <group
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect();
+        }}
+      >
+        <FlyModel color={agent.color} feeding={f.feeding} moving={f.speed > 0.05} dead={dead} scale={1} />
+      </group>
+      {selected ? (
+        <Label
+          position={[0, 1.4, 0]}
+          outline="#ffffff"
+          lines={[
+            `${agent.id} · FLY BRAIN${f.brainStatus === 'running' ? '' : ` (${f.brainStatus})`}${dead ? ' · DEAD' : ''}`,
+            // Rounded to 5 so the label texture is not rebuilt on every tiny vital change.
+            `⚡${r5(agent.energy)} 💧${r5(agent.hydration)} ❤${r5(agent.health)}${f.feeding ? ' · feeding' : ''}`,
+          ]}
+        />
+      ) : (
+        <Label position={[0, 1.1, 0]} lines={[agent.id]} bg="rgba(20,24,32,0.55)" />
+      )}
     </group>
   );
 }
@@ -181,9 +226,9 @@ function World({ selectedId, onSelect, follow }: { selectedId: string | null; on
   const world = useWorldThrottled(200);
   const selected = selectedId ? world.agents[selectedId] : undefined;
   const size = CONFIG.worldSize;
-  const labelled = selected
-    ? Object.values(world.resources).filter((r) => dist(r.position, selected.position) <= senseRadius(world, selected))
-    : [];
+  // Flies have no sight radius: show what is within smelling range of the selected fly instead.
+  const range = selected ? (selected.fly ? CONFIG.flyOdorSigma * 3 : senseRadius(world, selected)) : 0;
+  const labelled = selected ? Object.values(world.resources).filter((r) => dist(r.position, selected.position) <= range) : [];
   return (
     <>
       <Sky />
@@ -225,14 +270,18 @@ function World({ selectedId, onSelect, follow }: { selectedId: string | null; on
         ))}
       {selected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[selected.position.x, 0.07, selected.position.z]}>
-          <ringGeometry args={[senseRadius(world, selected) - 0.08, senseRadius(world, selected), 64]} />
+          <ringGeometry args={[range - 0.08, range, 64]} />
           <meshBasicMaterial color={selected.color} transparent opacity={0.6} depthWrite={false} />
         </mesh>
       )}
       <CommsLayer world={world} />
-      {Object.values(world.agents).map((a) => (
-        <AgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />
-      ))}
+      {Object.values(world.agents).map((a) =>
+        a.fly ? (
+          <FlyAgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />
+        ) : (
+          <AgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />
+        ),
+      )}
       <FollowCam agentId={follow ? selectedId : null} />
       <OrbitControls makeDefault maxPolarAngle={Math.PI / 2.15} minDistance={5} maxDistance={120} target={[0, 0, 0]} />
     </>

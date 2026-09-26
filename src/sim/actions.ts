@@ -369,6 +369,8 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
 
     case 'rest': {
       if (act.progress === 0) {
+        const inHazard = Object.values(state.hazards).find((h) => dist(h.position, a.position) < h.radius);
+        if (inHazard) return fail(state, a, act, `cannot rest here: inside ${HAZARDS[inHazard.kind].appearance} (${inHazard.id}); move out first`);
         a.target = null;
         a.status = 'resting';
       }

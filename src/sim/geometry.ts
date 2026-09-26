@@ -39,7 +39,7 @@ export function blocked(state: WorldState, p: Vec2, radius: number = CONFIG.agen
     if (o.solid && obstacleDistance(o, p) < radius) return true;
   }
   for (const a of Object.values(state.agents)) {
-    if (a.id === ignoreAgentId) continue;
+    if (a.id === ignoreAgentId || a.status === 'dead') continue;
     if (dist(p, a.position) < radius + CONFIG.agentRadius) return true;
   }
   return false;

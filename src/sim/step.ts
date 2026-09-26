@@ -8,13 +8,19 @@ import { ageOf, stageOf, stepLife } from './life';
 import { blocked, clampToBounds, dist } from './geometry';
 import { addNode, addObstacle, biomeAt, createInitialWorld, logEvent, milestone, newId, type Rng, sampleFreeSpot, spawnAgents, track } from './world';
 import { NODES } from '../shared/catalog';
+import { applyFlyMotors, stepFly } from './fly';
 
 export { runAction };
 
 function isCurrent(state: WorldState, cmd: { agentId: string; runId: string; seq: number }) {
   const a = state.agents[cmd.agentId];
-  return a && cmd.runId === state.runId && cmd.seq === a.controller.requestSeq ? a : null;
+  // `pending` guards the race where a controller switch bumped requestSeq before decisionStarted was applied.
+  return a && cmd.runId === state.runId && cmd.seq === a.controller.requestSeq && a.controller.pending ? a : null;
 }
+
+/** Interrupts that must trigger a fresh decision even if one just arrived. Messages etc. wait for the next one. */
+const URGENT = /hurt|hungry|thirsty|poison/;
+const sameAction = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 function sanitizeMemory(m: AgentMemory): AgentMemory {
   return {
@@ -65,6 +71,11 @@ function applyDecision(state: WorldState, agent: Agent, decision: Decision) {
   agent.intent = decision.intent ? decision.intent.slice(0, CONFIG.intentMaxChars) : null;
   agent.controller.lastPlan = decision.plan;
   if (agent.status === 'dead') return;
+  // If the new plan starts with the action already running, keep it running instead of restarting it.
+  if (agent.current && sameAction(decision.plan[0], agent.current.action)) {
+    agent.plan = decision.plan.slice(1, CONFIG.maxPlanLength);
+    return;
+  }
   // A new plan replaces whatever was running.
   if (agent.status === 'resting') agent.status = 'active';
   agent.current = null;
@@ -101,9 +112,12 @@ export function applyWorldEdit(state: WorldState, edit: WorldEdit, source: strin
     case 'set_weather':
       setWeather(state, edit.weather, rng);
       return log(true, `weather set to ${edit.weather}`);
-    case 'spawn_agents':
-      spawnAgents(state, edit.count, edit.controller, state.defaultTier, rng);
-      return;
+    case 'spawn_agents': {
+      // Creatures always match the world's population type; plan agents use the current default controller.
+      const controller = state.mode === 'flies' ? 'fly' : edit.controller === 'fly' ? state.defaultController : edit.controller;
+      const ids = spawnAgents(state, edit.count, controller, state.defaultTier, rng);
+      return log(ids.length > 0, `spawned ${ids.length} ${state.mode === 'flies' ? 'flies' : 'agents'}${ids.length ? `: ${ids.join(', ')}` : ''}`);
+    }
   }
 }
 
@@ -131,13 +145,35 @@ export function applyCommand(state: WorldState, cmd: SimCommand, rng: Rng, nextR
           commMode: state.experiment.commMode, traits: state.experiment.traits, scarcity: state.experiment.scarcity,
           lifespanSec: state.experiment.lifespanSec, inheritance: state.experiment.inheritance, ...cmd.experiment,
         },
+        mode: cmd.mode ?? state.mode,
+        flyCapacity: state.flyCapacity,
       });
+    case 'flyCapacity':
+      state.flyCapacity = Math.max(0, Math.floor(cmd.capacity));
+      return state;
+    case 'flyMotors':
+      if (cmd.runId === state.runId && !state.paused) applyFlyMotors(state, cmd.motors);
+      return state;
+    case 'flyBrainError':
+      if (cmd.runId !== state.runId) return state;
+      for (const id of cmd.agentIds) {
+        const a = state.agents[id];
+        if (!a?.fly) continue;
+        a.fly.brainStatus = 'error';
+        a.controller.lastError = cmd.error.slice(0, 300);
+      }
+      logEvent(state, { kind: 'error', ok: false, text: `fly brain error: ${cmd.error.slice(0, 200)}` });
+      return state;
     case 'spawnAgents':
       spawnAgents(state, cmd.count, cmd.controller, cmd.tier ?? state.defaultTier, rng);
       return state;
     case 'setController': {
       const a = state.agents[cmd.agentId];
       if (!a) return state;
+      if ((a.controller.kind === 'fly') !== (cmd.controller === 'fly')) {
+        logEvent(state, { kind: 'system', agentId: a.id, ok: false, text: `${a.id}: a fly body cannot switch to a plan controller (or vice versa)` });
+        return state;
+      }
       a.controller.kind = cmd.controller;
       if (cmd.tier) a.controller.tier = cmd.tier;
       // Before its first decision, a controller change is part of the agent's starting endowment.
@@ -157,6 +193,7 @@ export function applyCommand(state: WorldState, cmd: SimCommand, rng: Rng, nextR
       return state;
     }
     case 'setDefaultController':
+      if (cmd.controller === 'fly') return state;
       state.defaultController = cmd.controller;
       if (cmd.tier) state.defaultTier = cmd.tier;
       return state;
@@ -181,6 +218,8 @@ export function applyCommand(state: WorldState, cmd: SimCommand, rng: Rng, nextR
       a.controller.errorStreak = 0;
       a.controller.lastLatencyMs = cmd.latencyMs;
       applyDecision(state, a, cmd.decision);
+      // Non-urgent interrupts that arrived while this decision was pending (e.g. a message) wait for the next one.
+      if (a.controller.needsDecision && !URGENT.test(a.controller.interruptReason ?? '')) a.controller.needsDecision = false;
       return state;
     }
     case 'decisionError': {
@@ -424,7 +463,8 @@ export function stepWorld(state: WorldState, dt: number, rng: Rng = Math.random)
   for (const a of Object.values(state.agents)) {
     if (a.gesture && a.gesture.until <= state.time) a.gesture = null;
     if (a.status === 'dead') continue;
-    stepPlan(state, a, dt, rng);
+    if (a.fly) stepFly(state, a, dt);
+    else stepPlan(state, a, dt, rng);
     stepBody(state, a, dt, rng);
     if (a.inbox.length) a.inbox = a.inbox.filter((m) => state.time - m.sentAt <= CONFIG.messageTtlSec);
   }

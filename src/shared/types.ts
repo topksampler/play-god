@@ -2,6 +2,8 @@
 
 export type Vec2 = { x: number; z: number };
 export type ControllerKind = 'scripted' | 'llm' | 'fly';
+/** Which population inhabits the world: plan-based agents (LLM/scripted) or connectome-driven fruit flies. */
+export type WorldMode = 'agents' | 'flies';
 /** LLM model tier for in-world agents: fast = Haiku, smart = Sonnet (server maps tier → model). */
 export type AgentTier = 'fast' | 'smart';
 
@@ -177,6 +179,34 @@ export type ControllerState = {
 
 export type Item = { id: string; kind: ItemKind; label: string; spoilsAt: number | null };
 
+/** Latest spike-derived readouts of a fly's circuit (Hz), for inspection. Not a decision. */
+export type FlyReadout = {
+  dna02: [number, number];
+  dna01: [number, number];
+  mn9: number;
+  pam: number;
+  ppl1: number;
+  steer: number;
+  valence: number;
+  brainDriven: number;
+};
+
+/** Low-level motor state of a fly body, written only by `flyMotors` commands from the fly brain driver. */
+export type FlyBodyState = {
+  turnRate: number;
+  speed: number;
+  feeding: boolean;
+  readout: FlyReadout | null;
+  /** Sim time of the last motor command applied; flies stand still until their brain has produced one. */
+  motorAt: number | null;
+  /** Sim time of the last taste of food/water (drives the brain's gustatory and reward inputs). */
+  lastTaste: { at: number; sugar: boolean; bitter: boolean; ate: boolean } | null;
+  feedProgress: number;
+  brainStatus: 'loading' | 'running' | 'error';
+};
+
+export type FlyMotorCommand = { agentId: string; turnRate: number; speed: number; feeding: boolean; readout: FlyReadout };
+
 /** The action currently executing (possibly still approaching its target). */
 /** Per-agent history, recorded by the simulator (truth), grouped by decision turn. */
 export type TimelineKind = 'turn' | 'action' | 'said' | 'heard' | 'memory' | 'milestone' | 'hurt' | 'error';
@@ -251,6 +281,8 @@ export type Agent = {
   actionCounts: Partial<Record<ActionType, { ok: number; fail: number }>>;
   messagesSent: number;
   messagesHeard: number;
+  /** Present only for fruit flies (controller kind 'fly'). */
+  fly: FlyBodyState | null;
 };
 
 export type ResourceNode = {
@@ -320,6 +352,9 @@ export type WorldState = {
   seed: number;
   time: number;
   paused: boolean;
+  mode: WorldMode;
+  /** Live fly capacity reported by the brain workers (undefined until known). */
+  flyCapacity?: number;
   /** Controller kind/tier for newly spawned agents; preserved across reset. */
   defaultController: ControllerKind;
   defaultTier: AgentTier;
@@ -364,11 +399,14 @@ export type WorldEdit =
 export type SimCommand =
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'reset'; seed?: number; experiment?: Partial<Omit<ExperimentConfig, 'lexicon'>> }
+  | { type: 'reset'; seed?: number; experiment?: Partial<Omit<ExperimentConfig, 'lexicon'>>; mode?: WorldMode }
   | { type: 'spawnAgents'; count: number; controller: ControllerKind; tier?: AgentTier }
   | { type: 'setController'; agentId: string; controller: ControllerKind; tier?: AgentTier }
   | { type: 'setDefaultController'; controller: ControllerKind; tier?: AgentTier }
   | { type: 'edit'; edit: WorldEdit; source: string }
   | { type: 'decisionStarted'; agentId: string; runId: string; seq: number; observation: Observation }
   | { type: 'decisionResult'; agentId: string; runId: string; seq: number; decision: Decision; latencyMs: number }
-  | { type: 'decisionError'; agentId: string; runId: string; seq: number; error: string };
+  | { type: 'decisionError'; agentId: string; runId: string; seq: number; error: string }
+  | { type: 'flyMotors'; runId: string; motors: FlyMotorCommand[] }
+  | { type: 'flyCapacity'; capacity: number }
+  | { type: 'flyBrainError'; runId: string; agentIds: string[]; error: string };

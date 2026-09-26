@@ -116,7 +116,8 @@ const getClient = () => {
 
 type Step = z.infer<typeof LlmStep>;
 function toAction(s: Step): unknown {
-  const t = s.targetId ?? undefined;
+  // Models sometimes put an id in the other id field; accept either where only one id is needed.
+  const t = s.targetId ?? s.itemId ?? undefined;
   switch (s.action) {
     case 'move': return { type: 'move', target: { x: s.x, z: s.z }, ...(s.sprint ? { sprint: true } : {}) };
     case 'follow': return { type: 'follow', agentId: t };
@@ -149,7 +150,8 @@ export async function decide(req: DecideRequest): Promise<DecideResult> {
   const mode: Mode = voice === 'proto' || voice === 'silent' ? voice : 'english';
   const response = await getClient().messages.parse({
     model,
-    max_tokens: 3000,
+    // Thinking (adaptive by default on the smart tier) counts toward max_tokens; leave room so plans are not truncated.
+    max_tokens: 16000,
     system: [{ type: 'text', text: SYSTEMS[mode], cache_control: { type: 'ephemeral' } }],
     // Haiku 4.5 rejects `effort`; only send it to models that support it.
     output_config: model.includes('haiku')

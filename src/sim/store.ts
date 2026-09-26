@@ -16,6 +16,9 @@ export type SimStore = {
   /** Simulation speed multiplier (0.25–4). Rendering is unaffected. */
   getSpeed(): number;
   setSpeed(x: number): void;
+  /** Extra slowdown (≤ 1) applied on top of speed. Fly mode lowers it when brains cannot keep up. */
+  getTimeScale(): number;
+  setTimeScale(scale: number): void;
 };
 
 export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStore {
@@ -29,6 +32,7 @@ export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStor
   const stepDt = 1 / CONFIG.tickHz;
   let acc = 0;
   let speed = 1;
+  let timeScale = 1;
 
   const notify = () => {
     version++;
@@ -51,12 +55,17 @@ export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStor
     },
     tick(dt) {
       flush();
-      acc = Math.min(acc + dt * speed, CONFIG.maxCatchUpSec * speed); // cap catch-up after a tab stall
+      const k = speed * timeScale;
+      acc = Math.min(acc + dt * k, CONFIG.maxCatchUpSec * k); // cap catch-up after a tab stall
       while (acc >= stepDt) {
         stepWorld(state, stepDt, rng);
         acc -= stepDt;
       }
       notify();
+    },
+    getTimeScale: () => timeScale,
+    setTimeScale(scale) {
+      timeScale = Number.isFinite(scale) ? Math.min(1, Math.max(0.02, scale)) : 1;
     },
     getSpeed: () => speed,
     setSpeed(x) {

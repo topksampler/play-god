@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchHealth } from './controllers/llm';
+import { startFlyDriver } from './controllers/fly/driver';
 import { startScheduler } from './controllers/scheduler';
 import type { HealthResponse } from './shared/schemas';
 import { SimContext } from './sim/react';
@@ -24,15 +25,17 @@ export function App() {
   useEffect(() => {
     const stopSim = store.start();
     const stopSched = startScheduler(store);
+    const stopFlies = startFlyDriver(store);
     fetchHealth().then((h) => {
       setHealth(h);
       if (h.llmConfigured) {
         store.dispatch({ type: 'setDefaultController', controller: 'llm', tier: 'fast' });
-        for (const id of Object.keys(store.getState().agents))
-          store.dispatch({ type: 'setController', agentId: id, controller: 'llm', tier: 'fast' });
+        for (const a of Object.values(store.getState().agents))
+          if (!a.fly) store.dispatch({ type: 'setController', agentId: a.id, controller: 'llm', tier: 'fast' });
       }
     });
     return () => {
+      stopFlies();
       stopSched();
       stopSim();
     };

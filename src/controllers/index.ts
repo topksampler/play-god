@@ -13,7 +13,7 @@ export function getController(kind: ControllerKind): Controller {
       return {
         kind: 'fly',
         decide: async () => {
-          throw new Error('fly controller not implemented');
+          throw new Error('fly bodies are driven by the connectome brain driver, not by plan decisions');
         },
       };
   }

@@ -47,7 +47,8 @@ export function startScheduler(
     // Longest-waiting agents first, so a busy concurrency limit is shared fairly.
     const due = Object.values(s.agents)
       .filter((a) => {
-        if (a.status === 'dead' || inflight.has(a.id) || a.controller.pending) return false;
+        // Flies are driven continuously by their connectome brains (controllers/fly/driver.ts), not by plan decisions.
+        if (a.fly || a.status === 'dead' || inflight.has(a.id) || a.controller.pending) return false;
         const since = s.time - (a.controller.lastDecisionAt ?? -Infinity);
         // Back off after failures (3s, 6s, 12s … capped) to avoid retry storms.
         const backoff = a.controller.errorStreak ? Math.min(30, 3 * 2 ** (a.controller.errorStreak - 1)) : 0;
