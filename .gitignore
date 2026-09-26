@@ -6,3 +6,6 @@ dist
 .DS_Store
 tools/fly/data/
 __pycache__/
+
+# Playwright MCP browser-testing artifacts (screenshots, console logs)
+.playwright-mcp/
