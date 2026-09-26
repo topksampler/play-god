@@ -8,9 +8,12 @@ import { daylight, senseRadius } from '../sim/environment';
 import { dist } from '../sim/geometry';
 import { useSim, useWorldThrottled } from '../sim/react';
 import { GroundItemMesh, HazardMesh, ObstacleMesh, ResourceMesh, StructureMesh } from './Entities';
+import { CreatureModel } from './Creature';
+import { FlyModel } from './FlyModel';
 import { Label } from './Label';
 import { Terrain } from './Terrain';
 
+const r5 = (v: number) => Math.round(v / 5) * 5;
 const tierLabel = (a: Agent) => (a.controller.kind === 'llm' ? (a.controller.tier === 'smart' ? 'SONNET' : 'HAIKU') : a.controller.kind.toUpperCase());
 
 function AgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: boolean; onSelect: () => void }) {
@@ -34,35 +37,66 @@ function AgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: bool
     .join(' ');
   return (
     <group ref={ref} position={[agent.position.x, 0, agent.position.z]}>
-      <mesh
-        position={[0, dead ? 0.3 : 0.7, 0]}
-        rotation={dead ? [0, 0, Math.PI / 2] : [0, 0, 0]}
-        scale={resting ? [1, 0.7, 1] : [1, 1, 1]}
-        castShadow
+      <group
         onClick={(e) => {
           e.stopPropagation();
           onSelect();
         }}
       >
-        <capsuleGeometry args={[CONFIG.agentRadius, 0.5, 4, 12]} />
-        <meshStandardMaterial color={dead ? '#555' : agent.color} flatShading />
-      </mesh>
-      {!dead && (
-        <mesh position={[0, 0.95, CONFIG.agentRadius * 0.8]}>
-          <sphereGeometry args={[0.1, 8, 8]} />
-          <meshStandardMaterial color="#111" />
-        </mesh>
-      )}
+        <CreatureModel color={agent.color} dead={dead} resting={resting} moving={Boolean(agent.target) && !dead} speed={agent.sprinting ? 2 : 1} />
+      </group>
       {agent.hasTorch && !dead && <pointLight position={[0, 1.6, 0]} color="#ffb347" intensity={3} distance={8} />}
       <Label
         position={[0, 2, 0]}
         outline={selected ? '#ffffff' : undefined}
         lines={[
           `${agent.id} · ${tierLabel(agent)}${c.pending ? ' …' : ''}${c.lastError ? ' ⚠' : ''}${dead ? ' · DEAD' : ''}`,
-          `⚡${agent.energy.toFixed(0)} 💧${agent.hydration.toFixed(0)} ❤${agent.health.toFixed(0)} 🎒${agent.items.length}${cond ? ' ' + cond : ''}`,
+          // Rounded to 5 so the label texture is not rebuilt on every tiny vital change.
+          `⚡${r5(agent.energy)} 💧${r5(agent.hydration)} ❤${r5(agent.health)} 🎒${agent.items.length}${cond ? ' ' + cond : ''}`,
           ...(agent.current && !dead ? [`▶ ${agent.current.action.type}${agent.plan.length ? ` (+${agent.plan.length})` : ''}`] : []),
         ]}
       />
+    </group>
+  );
+}
+
+/** A connectome-driven fruit fly. Only the selected fly gets a stats label, to keep 40+ flies cheap to draw. */
+function FlyAgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: boolean; onSelect: () => void }) {
+  const store = useSim();
+  const ref = useRef<Group>(null);
+  useFrame((_, dt) => {
+    const a = store.getState().agents[agent.id];
+    const g = ref.current;
+    if (!a || !g) return;
+    const k = 1 - Math.exp(-dt * 12);
+    g.position.x += (a.position.x - g.position.x) * k;
+    g.position.z += (a.position.z - g.position.z) * k;
+    g.rotation.y = -a.heading + Math.PI / 2;
+  });
+  const f = agent.fly!;
+  const dead = agent.status === 'dead';
+  return (
+    <group ref={ref} position={[agent.position.x, 0, agent.position.z]}>
+      <group
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect();
+        }}
+      >
+        <FlyModel color={agent.color} feeding={f.feeding} moving={f.speed > 0.05} dead={dead} scale={1} />
+      </group>
+      {selected ? (
+        <Label
+          position={[0, 1.4, 0]}
+          outline="#ffffff"
+          lines={[
+            `${agent.id} · FLY BRAIN${f.brainStatus === 'running' ? '' : ` (${f.brainStatus})`}${dead ? ' · DEAD' : ''}`,
+            `⚡${r5(agent.energy)} 💧${r5(agent.hydration)} ❤${r5(agent.health)}${f.feeding ? ' · feeding' : ''}`,
+          ]}
+        />
+      ) : (
+        <Label position={[0, 1.1, 0]} lines={[agent.id]} bg="rgba(20,24,32,0.55)" />
+      )}
     </group>
   );
 }
@@ -174,9 +208,9 @@ function World({ selectedId, onSelect }: { selectedId: string | null; onSelect: 
   const world = useWorldThrottled(200);
   const selected = selectedId ? world.agents[selectedId] : undefined;
   const size = CONFIG.worldSize;
-  const labelled = selected
-    ? Object.values(world.resources).filter((r) => dist(r.position, selected.position) <= senseRadius(world, selected))
-    : [];
+  // Flies have no sight radius: show what is within smelling range of the selected fly instead.
+  const range = selected ? (selected.fly ? CONFIG.flyOdorSigma * 3 : senseRadius(world, selected)) : 0;
+  const labelled = selected ? Object.values(world.resources).filter((r) => dist(r.position, selected.position) <= range) : [];
   return (
     <>
       <Sky />
@@ -218,13 +252,17 @@ function World({ selectedId, onSelect }: { selectedId: string | null; onSelect: 
         ))}
       {selected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[selected.position.x, 0.07, selected.position.z]}>
-          <ringGeometry args={[senseRadius(world, selected) - 0.08, senseRadius(world, selected), 64]} />
+          <ringGeometry args={[range - 0.08, range, 64]} />
           <meshBasicMaterial color={selected.color} transparent opacity={0.6} depthWrite={false} />
         </mesh>
       )}
-      {Object.values(world.agents).map((a) => (
-        <AgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />
-      ))}
+      {Object.values(world.agents).map((a) =>
+        a.fly ? (
+          <FlyAgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />
+        ) : (
+          <AgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />
+        ),
+      )}
       <OrbitControls makeDefault maxPolarAngle={Math.PI / 2.15} minDistance={5} maxDistance={120} target={[0, 0, 0]} />
     </>
   );

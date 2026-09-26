@@ -45,6 +45,13 @@ export const CONFIG = {
   maxConcurrentDecisions: 3,
   decisionTimeoutMs: 25000,
   maxAgents: 8,
+  /** Fruit-fly mode: upper bound; the live cap is also limited by brain worker capacity. */
+  maxFlies: 48,
+  flyRadius: 0.35,
+  flyWalkSpeed: 1.8,
+  /** Seconds of proboscis contact needed to ingest one unit of food. */
+  flyFeedSecondsPerUnit: 1.5,
+  flyOdorSigma: 3,
   notesMaxChars: 400,
   maxPlaces: 12,
   maxBeliefs: 12,

@@ -32,3 +32,7 @@ summary { cursor: pointer; font-size: 12px; }
 .crash { padding: 12px; color: #b3261e; background: #fff4f4; font-size: 12px; } .crash button { margin-left: 8px; }
 .hud { position: absolute; left: 8px; top: 8px; background: rgba(20,24,32,0.72); color: #fff; padding: 4px 10px; border-radius: 4px; font-size: 13px; }
 .feed .eco { color: #2e7d32; }
+.modes { display: flex; gap: 0; margin: 4px 0 8px; border: 1px solid #b9bfca; border-radius: 6px; overflow: hidden; }
+.modes button { flex: 1; border: 0; border-radius: 0; padding: 7px 6px; background: #fff; font-weight: 500; }
+.modes button.on { background: #1d2330; color: #fff; }
+.god input { flex: 1; min-width: 0; font: inherit; padding: 4px 8px; border: 1px solid #b9bfca; border-radius: 4px; }

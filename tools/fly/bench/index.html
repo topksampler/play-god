@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Fly brain worker benchmark</title>
+<pre id="out">running…</pre>
+<script type="module">
+  import { FlySwarm } from '/src/controllers/fly/swarm.ts';
+  const params = new URLSearchParams(location.search);
+  const flies = Number(params.get('flies') ?? 20);
+  const odor = Number(params.get('odor') ?? 0.6);
+  const swarm = await FlySwarm.create({ workers: params.get('workers') ? Number(params.get('workers')) : undefined, perWorker: Number(params.get('per') ?? 5) });
+  for (let i = 0; i < flies; i++) swarm.spawn(`f${i}`, i + 1);
+  const sensors = new Map();
+  for (let i = 0; i < flies; i++) sensors.set(`f${i}`, { odorA: [odor * (i % 2 ? 1 : 0.6), odor], odorB: [0, 0], sugarContact: false, bitterContact: false, energy: 40, ateThisTick: false });
+  const samples = [];
+  const t0 = performance.now();
+  const timer = setInterval(() => { swarm.step(sensors); samples.push(swarm.status().realtimeFactor); }, 50);
+  setTimeout(() => {
+    clearInterval(timer);
+    const st = swarm.status();
+    const rt = samples.slice(40);
+    window.result = { flies, odor, workers: st.workers, capacity: st.capacity, droppedTicks: st.droppedTicks, ticks: samples.length, meanRealtime: rt.reduce((a, b) => a + b, 0) / rt.length, minRealtime: Math.min(...rt), cores: navigator.hardwareConcurrency };
+    document.getElementById('out').textContent = JSON.stringify(window.result, null, 1);
+  }, 12000);
+</script>

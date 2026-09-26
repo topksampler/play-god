@@ -1,10 +1,24 @@
 import { CONFIG } from '../shared/config';
-import type { AgentTier, Controller, ControllerKind } from '../shared/types';
+import type { Agent, AgentTier, Controller, ControllerKind, WorldState } from '../shared/types';
 import { observe } from '../sim/observe';
 import type { SimStore } from '../sim/store';
 import { getController } from './index';
 
 type InFlight = { abort: AbortController; runId: string; seq: number };
+
+/** Whether an agent should be asked for a new plan now (same rule the headless benchmark uses). */
+export function decisionDue(s: WorldState, a: Agent): boolean {
+  if (a.fly || a.status === 'dead' || a.controller.pending) return false;
+  const since = s.time - (a.controller.lastDecisionAt ?? -Infinity);
+  // Back off after failures (3s, 6s, 12s … capped) to avoid retry storms.
+  const backoff = a.controller.errorStreak ? Math.min(30, 3 * 2 ** (a.controller.errorStreak - 1)) : 0;
+  const idle = !a.current && a.plan.length === 0;
+  // Instant (scripted) controllers may re-plan sooner when idle; slow ones keep the full gap.
+  const gap = idle && a.controller.kind === 'scripted' ? 0.4 : CONFIG.minDecisionGapSec;
+  if (since < Math.max(gap, backoff)) return false;
+  // A running action is not re-planned just because time passed (interrupts still trigger urgent re-plans).
+  return idle || a.controller.needsDecision || (since >= CONFIG.maxDecisionGapSec && !a.current);
+}
 
 /**
  * Issues decisions off the render loop: at most one outstanding per agent, a global concurrency limit,
@@ -45,17 +59,11 @@ export function startScheduler(
     }
 
     // Longest-waiting agents first, so a busy concurrency limit is shared fairly.
+    // Flies are driven continuously by their connectome brains (controllers/fly/driver.ts), not by plan decisions.
     const due = Object.values(s.agents)
-      .filter((a) => {
-        if (a.status === 'dead' || inflight.has(a.id) || a.controller.pending) return false;
-        const since = s.time - (a.controller.lastDecisionAt ?? -Infinity);
-        // Back off after failures (3s, 6s, 12s … capped) to avoid retry storms.
-        const backoff = a.controller.errorStreak ? Math.min(30, 3 * 2 ** (a.controller.errorStreak - 1)) : 0;
-        if (since < Math.max(CONFIG.minDecisionGapSec, backoff)) return false;
-        const idle = !a.current && a.plan.length === 0;
-        return a.controller.needsDecision || idle || since >= CONFIG.maxDecisionGapSec;
-      })
-      .sort((a, b) => (a.controller.lastDecisionAt ?? -Infinity) - (b.controller.lastDecisionAt ?? -Infinity));
+      .filter((a) => !inflight.has(a.id) && decisionDue(s, a))
+      // Idle agents first, then longest-waiting, so a busy concurrency limit is shared fairly.
+      .sort((x, y) => Number(Boolean(x.current || x.plan.length)) - Number(Boolean(y.current || y.plan.length)) || (x.controller.lastDecisionAt ?? -Infinity) - (y.controller.lastDecisionAt ?? -Infinity));
 
     for (const a of due) {
       if (inflight.size >= CONFIG.maxConcurrentDecisions) break;

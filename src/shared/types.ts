@@ -2,6 +2,8 @@
 
 export type Vec2 = { x: number; z: number };
 export type ControllerKind = 'scripted' | 'llm' | 'fly';
+/** Which population inhabits the world: plan-based agents (LLM/scripted) or connectome-driven fruit flies. */
+export type WorldMode = 'agents' | 'flies';
 /** LLM model tier for in-world agents: fast = Haiku, smart = Sonnet (server maps tier → model). */
 export type AgentTier = 'fast' | 'smart';
 
@@ -40,7 +42,7 @@ export type Action =
   | { type: 'cook'; itemId: string }
   | { type: 'deposit'; cacheId: string; itemId: string }
   | { type: 'withdraw'; cacheId: string; itemId: string }
-  | { type: 'wait' };
+  | { type: 'wait'; seconds?: number };
 export type ActionType = Action['type'];
 
 /** Private, bounded, agent-authored memory. Beliefs are what the agent concluded, not verified truth. */
@@ -79,11 +81,13 @@ export type Observation = {
     senseRadius: number;
     currentAction: ActionType | null;
     planRemaining: number;
+    /** Why this decision was requested (e.g. "plan complete", "hurt by thorns", "message from a2"). */
+    trigger: string | null;
   };
   bounds: { min: Vec2; max: Vec2 };
   visibleResources: { id: string; appearance: string; position: Vec2; distance: number; bearing: string; units: number }[];
   visibleHazards: { id: string; appearance: string; position: Vec2; radius: number; distance: number }[];
-  visibleObstacles: { id: string; kind: ObstacleShape; position: Vec2; radius: number }[];
+  visibleObstacles: { id: string; kind: ObstacleShape; position: Vec2; radius: number; solid: boolean; halfLength?: number; angle?: number }[];
   visibleAgents: { id: string; position: Vec2; distance: number; status: AgentStatus }[];
   visibleStructures: {
     id: string; kind: StructureKind; position: Vec2; distance: number; text?: string; lit?: boolean;
@@ -92,7 +96,9 @@ export type Observation = {
   }[];
   visibleGroundItems: { id: string; label: string; position: Vec2; distance: number }[];
   messages: Message[];
-  recentOutcomes: { actionType: ActionType; ok: boolean; detail: string }[];
+  recentOutcomes: { actionType: ActionType; ok: boolean; detail: string; secondsAgo: number }[];
+  /** The agent's own remembered places, with current distance and compass bearing. */
+  rememberedPlaces: { label: string; position: Vec2; distance: number; bearing: string }[];
 };
 
 export interface Controller {
@@ -119,6 +125,32 @@ export type ControllerState = {
 };
 
 export type Item = { id: string; kind: ItemKind; label: string; spoilsAt: number | null };
+
+/** Latest spike-derived readouts of a fly's circuit (Hz), for inspection. Not a decision. */
+export type FlyReadout = {
+  dna02: [number, number];
+  dna01: [number, number];
+  mn9: number;
+  pam: number;
+  ppl1: number;
+  steer: number;
+  valence: number;
+  brainDriven: number;
+};
+
+/** Low-level motor state of a fly body, written only by `flyMotors` commands from the fly brain driver. */
+export type FlyBodyState = {
+  turnRate: number;
+  speed: number;
+  feeding: boolean;
+  readout: FlyReadout | null;
+  /** Sim time of the last motor command applied; flies stand still until their brain has produced one. */
+  motorAt: number | null;
+  /** Sim time of the last taste of food/water (drives the brain's gustatory and reward inputs). */
+  lastTaste: { at: number; sugar: boolean; bitter: boolean; ate: boolean } | null;
+  feedProgress: number;
+  brainStatus: 'loading' | 'running' | 'error';
+};
 
 /** The action currently executing (possibly still approaching its target). */
 export type ActiveAction = { action: Action; startedAt: number; progress: number };
@@ -151,6 +183,13 @@ export type Agent = {
   lastDamageAt: number;
   /** Seconds spent unable to make progress toward target. */
   stuckFor: number;
+  /** Planned waypoints toward `target` (simulator-internal path planning), and the target they were planned for. */
+  route: Vec2[] | null;
+  routeFor: Vec2 | null;
+  /** Last damage time per cause, so a new hazard is reported even while another damage source is active. */
+  damageAt: Record<string, number>;
+  /** Present only for fruit flies (controller kind 'fly'). */
+  fly: FlyBodyState | null;
 };
 
 export type ResourceNode = {
@@ -210,6 +249,9 @@ export type WorldState = {
   seed: number;
   time: number;
   paused: boolean;
+  mode: WorldMode;
+  /** Live fly capacity reported by the brain workers (undefined until known). */
+  flyCapacity?: number;
   /** Controller kind/tier for newly spawned agents; preserved across reset. */
   defaultController: ControllerKind;
   defaultTier: AgentTier;
@@ -243,11 +285,16 @@ export type WorldEdit =
 export type SimCommand =
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'reset'; seed?: number }
+  | { type: 'reset'; seed?: number; mode?: WorldMode }
   | { type: 'spawnAgents'; count: number; controller: ControllerKind; tier?: AgentTier }
   | { type: 'setController'; agentId: string; controller: ControllerKind; tier?: AgentTier }
   | { type: 'setDefaultController'; controller: ControllerKind; tier?: AgentTier }
   | { type: 'edit'; edit: WorldEdit; source: string }
   | { type: 'decisionStarted'; agentId: string; runId: string; seq: number; observation: Observation }
   | { type: 'decisionResult'; agentId: string; runId: string; seq: number; decision: Decision; latencyMs: number }
-  | { type: 'decisionError'; agentId: string; runId: string; seq: number; error: string };
+  | { type: 'decisionError'; agentId: string; runId: string; seq: number; error: string }
+  | { type: 'flyMotors'; runId: string; motors: FlyMotorCommand[] }
+  | { type: 'flyCapacity'; capacity: number }
+  | { type: 'flyBrainError'; runId: string; agentIds: string[]; error: string };
+
+export type FlyMotorCommand = { agentId: string; turnRate: number; speed: number; feeding: boolean; readout: FlyReadout };

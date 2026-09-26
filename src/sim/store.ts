@@ -13,6 +13,9 @@ export type SimStore = {
   /** Apply queued commands and advance by dt seconds of fixed steps. */
   tick(dt: number): void;
   start(): () => void;
+  /** Simulated seconds per real second (≤ 1). Fly mode lowers it when brains cannot keep up with real time. */
+  getTimeScale(): number;
+  setTimeScale(scale: number): void;
 };
 
 export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStore {
@@ -25,6 +28,7 @@ export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStor
   const subs = new Set<() => void>();
   const stepDt = 1 / CONFIG.tickHz;
   let acc = 0;
+  let timeScale = 1;
 
   const notify = () => {
     version++;
@@ -45,9 +49,13 @@ export function createSimStore(opts: { rng?: Rng; seed?: number } = {}): SimStor
     dispatch(cmd) {
       queue.push(cmd);
     },
+    getTimeScale: () => timeScale,
+    setTimeScale(scale) {
+      timeScale = Number.isFinite(scale) ? Math.min(1, Math.max(0.05, scale)) : 1;
+    },
     tick(dt) {
       flush();
-      acc = Math.min(acc + dt, CONFIG.maxCatchUpSec); // cap catch-up after a tab stall
+      acc = Math.min(acc + dt * timeScale, CONFIG.maxCatchUpSec); // cap catch-up after a tab stall
       while (acc >= stepDt) {
         stepWorld(state, stepDt, rng);
         acc -= stepDt;

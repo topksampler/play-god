@@ -1,7 +1,7 @@
 import { BIOMES, NODES } from '../shared/catalog';
 import { AGENT_COLORS, CONFIG } from '../shared/config';
 import type {
-  Agent, AgentMemory, AgentTier, Biome, BiomeKind, ControllerKind, NodeKind, Obstacle, ObstacleShape, SimEvent, Vec2, WorldState,
+  Agent, AgentMemory, AgentTier, Biome, BiomeKind, ControllerKind, FlyBodyState, NodeKind, Obstacle, ObstacleShape, SimEvent, Vec2, WorldMode, WorldState,
 } from '../shared/types';
 import { blocked, dist, obstacleDistance } from './geometry';
 import { mulberry32, type Rng } from './rng';
@@ -35,14 +35,18 @@ export function biomeAt(state: WorldState, p: Vec2): BiomeKind {
 
 export const emptyMemory = (): AgentMemory => ({ notes: '', places: [], beliefs: [] });
 
-export function createAgent(state: WorldState, position: Vec2, controller: ControllerKind, tier: AgentTier): Agent {
+export const newFlyBody = (): FlyBodyState => ({
+  turnRate: 0, speed: 0, feeding: false, readout: null, motorAt: null, lastTaste: null, feedProgress: 0, brainStatus: 'loading',
+});
+
+export function createAgent(state: WorldState, position: Vec2, controller: ControllerKind, tier: AgentTier, rng: Rng = Math.random): Agent {
   const index = Object.keys(state.agents).length;
-  const id = newId(state, 'a');
+  const id = newId(state, controller === 'fly' ? 'f' : 'a');
   return {
     id,
     color: AGENT_COLORS[index % AGENT_COLORS.length],
     position: { ...position },
-    heading: 0,
+    heading: controller === 'fly' ? rng() * Math.PI * 2 : 0,
     energy: 80,
     hydration: 80,
     health: CONFIG.maxVital,
@@ -79,6 +83,10 @@ export function createAgent(state: WorldState, position: Vec2, controller: Contr
     stats: { eaten: 0, drank: 0, distance: 0, poisonings: 0, built: 0, damageTaken: 0 },
     lastDamageAt: -Infinity,
     stuckFor: 0,
+    route: null,
+    routeFor: null,
+    damageAt: {},
+    fly: controller === 'fly' ? newFlyBody() : null,
   };
 }
 
@@ -109,28 +117,39 @@ export function sampleFreeSpot(
   return null;
 }
 
+export function populationLimit(state: WorldState): number {
+  return state.mode === 'flies' ? Math.min(CONFIG.maxFlies, state.flyCapacity ?? CONFIG.maxFlies) : CONFIG.maxAgents;
+}
+
 export function spawnAgents(state: WorldState, count: number, controller: ControllerKind, tier: AgentTier, rng: Rng): string[] {
   const spawned: string[] = [];
-  const room = CONFIG.maxAgents - Object.keys(state.agents).length;
+  const flies = state.mode === 'flies';
+  if (flies !== (controller === 'fly')) {
+    logEvent(state, { kind: 'spawn', ok: false, text: `Spawn rejected: ${controller} creatures cannot enter ${state.mode} mode` });
+    return spawned;
+  }
+  const limit = populationLimit(state);
+  const noun = flies ? 'flies' : 'agents';
+  const room = limit - Object.keys(state.agents).length;
   if (room <= 0) {
-    logEvent(state, { kind: 'spawn', ok: false, text: `Spawn rejected: max ${CONFIG.maxAgents} agents` });
+    logEvent(state, { kind: 'spawn', ok: false, text: `Spawn rejected: max ${limit} ${noun}` });
     return spawned;
   }
   const n = Math.min(count, room);
   // Spawn around the central meadow so newcomers begin somewhere survivable.
   const home = state.biomes[4]?.site;
   for (let i = 0; i < n; i++) {
-    const p = (home && sampleFreeSpot(state, rng, { near: home, within: 10 })) || sampleFreeSpot(state, rng);
+    const p = (home && sampleFreeSpot(state, rng, { near: home, within: flies ? 14 : 10 })) || sampleFreeSpot(state, rng);
     if (!p) {
       logEvent(state, { kind: 'spawn', ok: false, text: 'Spawn rejected: no free spot found' });
       break;
     }
-    const agent = createAgent(state, p, controller, tier);
+    const agent = createAgent(state, p, controller, tier, rng);
     state.agents[agent.id] = agent;
     spawned.push(agent.id);
-    logEvent(state, { kind: 'spawn', agentId: agent.id, ok: true, text: `Spawned ${agent.id} (${controller}${controller === 'llm' ? `/${tier}` : ''})` });
+    logEvent(state, { kind: 'spawn', agentId: agent.id, ok: true, text: `Spawned ${agent.id} (${controller === 'fly' ? 'connectome fly' : controller}${controller === 'llm' ? `/${tier}` : ''})` });
   }
-  if (n < count) logEvent(state, { kind: 'spawn', ok: false, text: `Only ${n} of ${count} spawned: max ${CONFIG.maxAgents} agents` });
+  if (n < count) logEvent(state, { kind: 'spawn', ok: false, text: `Only ${n} of ${count} spawned: max ${limit} ${noun}` });
   return spawned;
 }
 
@@ -236,8 +255,9 @@ function generate(state: WorldState, rng: Rng) {
 export function createInitialWorld(
   runId: string,
   defaultController: ControllerKind,
-  opts: { seed?: number; defaultTier?: AgentTier } = {},
+  opts: { seed?: number; defaultTier?: AgentTier; mode?: WorldMode; flyCapacity?: number } = {},
 ): WorldState {
+  const mode = opts.mode ?? 'agents';
   const seed = opts.seed ?? CONFIG.defaultSeed;
   const rng = mulberry32(seed);
   const h = CONFIG.worldSize / 2;
@@ -246,6 +266,8 @@ export function createInitialWorld(
     seed,
     time: CONFIG.dayLengthSec * 0.05,
     paused: false,
+    mode,
+    flyCapacity: opts.flyCapacity,
     defaultController,
     defaultTier: opts.defaultTier ?? 'fast',
     weather: 'clear',
@@ -273,9 +295,12 @@ export function createInitialWorld(
     (bush && sampleFreeSpot(state, rng, { near: bush.position, within: 3 })) ||
     sampleFreeSpot(state, rng, { near: meadow.site, within: 6 }) ||
     { x: 0, z: 0 };
-  const first = createAgent(state, start, defaultController, state.defaultTier);
+  // defaultController is the plan-controller preference for agent mode; it survives a visit to fly mode.
+  state.defaultController = defaultController === 'fly' ? 'scripted' : defaultController;
+  const controller: ControllerKind = mode === 'flies' ? 'fly' : state.defaultController;
+  const first = createAgent(state, start, controller, state.defaultTier, rng);
   state.agents[first.id] = first;
-  logEvent(state, { kind: 'system', ok: true, text: `Run ${runId} started (seed ${seed})` });
-  logEvent(state, { kind: 'spawn', agentId: first.id, ok: true, text: `Spawned ${first.id} (${defaultController})` });
+  logEvent(state, { kind: 'system', ok: true, text: `Run ${runId} started (seed ${seed}, ${mode === 'flies' ? 'fruit-fly' : 'agent'} mode)` });
+  logEvent(state, { kind: 'spawn', agentId: first.id, ok: true, text: `Spawned ${first.id} (${controller === 'fly' ? 'connectome fly' : controller})` });
   return state;
 }

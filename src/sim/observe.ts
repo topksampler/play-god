@@ -51,6 +51,7 @@ export function observe(state: WorldState, agentId: string): Observation {
       senseRadius: r1(radius),
       currentAction: self.current?.action.type ?? null,
       planRemaining: self.plan.length,
+      trigger: self.controller.interruptReason,
     },
     bounds: state.bounds,
     visibleResources: nearest(Object.values(state.resources), CONFIG.observeMaxResources).map((r) => ({
@@ -72,7 +73,9 @@ export function observe(state: WorldState, agentId: string): Observation {
       id: o.id,
       kind: o.shape,
       position: pos(o.position),
-      radius: r1(o.halfLength ?? o.radius),
+      radius: r1(o.radius),
+      solid: o.solid,
+      ...(o.halfLength !== undefined ? { halfLength: r1(o.halfLength), angle: r1(o.angle ?? 0) } : {}),
     })),
     visibleAgents: nearest(
       Object.values(state.agents).filter((a) => a.id !== self.id),
@@ -94,6 +97,12 @@ export function observe(state: WorldState, agentId: string): Observation {
       distance: r1(d(g.position)),
     })),
     messages: self.inbox.map((m) => ({ ...m })),
-    recentOutcomes: self.recentOutcomes.map(({ actionType, ok, detail }) => ({ actionType, ok, detail })),
+    recentOutcomes: self.recentOutcomes.map(({ actionType, ok, detail, at }) => ({ actionType, ok, detail, secondsAgo: Math.round(state.time - at) })),
+    rememberedPlaces: self.memory.places.map((p) => ({
+      label: p.label,
+      position: { x: r1(p.x), z: r1(p.z) },
+      distance: r1(dist(p, self.position)),
+      bearing: bearing(self.position, p),
+    })),
   };
 }

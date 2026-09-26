@@ -3,6 +3,7 @@ import { CONFIG } from '../shared/config';
 import type { ActionType, ActiveAction, Agent, Item, ItemKind, Vec2, WorldState } from '../shared/types';
 import { blocked, clampToBounds, dist, obstacleDistance } from './geometry';
 import { nearStructure, senseRadius } from './environment';
+import { planPath } from './path';
 import { biomeAt, logEvent, newId, type Rng } from './world';
 import { BIOMES } from '../shared/catalog';
 
@@ -40,17 +41,32 @@ export function speedAt(state: WorldState, a: Agent): number {
 }
 
 /** Steps toward agent.target. Returns 'arrived' | 'blocked' | 'moving'. */
+const sameTarget = (a: Vec2 | null, b: Vec2 | null) => Boolean(a && b && Math.abs(a.x - b.x) < 0.25 && Math.abs(a.z - b.z) < 0.25);
+
 export function stepToward(state: WorldState, a: Agent, dt: number, stopWithin = 0.05): 'arrived' | 'blocked' | 'moving' {
   if (!a.target) return 'arrived';
-  const dx = a.target.x - a.position.x;
-  const dz = a.target.z - a.position.z;
-  const d = Math.hypot(dx, dz);
+  const d = dist(a.position, a.target);
   if (d <= stopWithin) {
     a.target = null;
+    a.route = null;
     a.sprinting = false;
     return 'arrived';
   }
-  const step = Math.min(speedAt(state, a) * dt, d);
+  // Plan around obstacles (and, where possible, hazards) once per target; follow the waypoints.
+  if (!a.route || !sameTarget(a.routeFor, a.target)) {
+    a.route = planPath(state, a.position, a.target);
+    a.routeFor = { ...a.target };
+    if (!a.route) {
+      a.target = null;
+      a.sprinting = false;
+      return 'blocked';
+    }
+  }
+  while (a.route.length > 1 && dist(a.position, a.route[0]) < 0.35) a.route.shift();
+  const next = a.route[0] ?? a.target;
+  const dx = next.x - a.position.x;
+  const dz = next.z - a.position.z;
+  const step = Math.min(speedAt(state, a) * dt, Math.max(Math.hypot(dx, dz), 1e-6));
   const base = Math.atan2(dz, dx);
   let moved = false;
   for (const off of [0, ...SIDESTEP]) {
@@ -66,8 +82,10 @@ export function stepToward(state: WorldState, a: Agent, dt: number, stopWithin =
     break;
   }
   if (!moved) a.stuckFor += dt;
-  if (a.stuckFor >= 2) {
+  if (a.stuckFor >= 1 && a.stuckFor - dt < 1) a.route = null; // replan once (e.g. another agent is in the way)
+  if (a.stuckFor >= 2.5) {
     a.target = null;
+    a.route = null;
     a.stuckFor = 0;
     a.sprinting = false;
     return 'blocked';
@@ -187,9 +205,12 @@ function eatEffect(state: WorldState, a: Agent, item: Item, rng: Rng): string {
 export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: number, rng: Rng): ActionStatus {
   const action = act.action;
   switch (action.type) {
-    case 'wait':
+    case 'wait': {
       a.target = null;
-      return ok(state, a, act, 'waited', false);
+      act.progress += dt;
+      const seconds = Math.min(10, Math.max(0, action.seconds ?? 3));
+      return act.progress >= seconds ? ok(state, a, act, `waited ${seconds.toFixed(0)}s`, false) : 'ongoing';
+    }
 
     case 'move': {
       if (act.progress === 0) {
@@ -293,6 +314,8 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
 
     case 'rest': {
       if (act.progress === 0) {
+        const inHazard = Object.values(state.hazards).find((h) => dist(h.position, a.position) < h.radius);
+        if (inHazard) return fail(state, a, act, `cannot rest here: inside ${HAZARDS[inHazard.kind].appearance} (${inHazard.id}); move out first`);
         a.target = null;
         a.status = 'resting';
       }
