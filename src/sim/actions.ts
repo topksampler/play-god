@@ -5,7 +5,7 @@ import { blocked, clampToBounds, dist, obstacleDistance } from './geometry';
 import { nearStructure, senseRadius } from './environment';
 import { hearersOf, recordUtterance } from './communication';
 import { clearSegment, findPath } from './pathing';
-import { closeEnough, mateBlocker, recordCourtship, stageOf, tryBirth } from './life';
+import { closeEnough, killAgent, mateBlocker, recordCourtship, stageOf, tryBirth } from './life';
 import { biomeAt, logEvent, milestone, newId, type Rng, track, traitMods } from './world';
 import { BIOMES } from '../shared/catalog';
 
@@ -167,6 +167,7 @@ function fail(state: WorldState, a: Agent, act: ActiveAction, detail: string): '
 const VISIBLE: Partial<Record<ActionType, string>> = {
   gather: 'gathering', eat: 'eating', drink: 'drinking', cook: 'cooking', craft: 'crafting', build: 'building',
   give: 'handing over', pickup: 'picking up', drop: 'dropping', deposit: 'storing', withdraw: 'taking from storage', inspect: 'inspecting',
+  swat: 'swatting',
 };
 
 function ok(state: WorldState, a: Agent, act: ActiveAction, detail: string, log = true): 'done' {
@@ -354,6 +355,7 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
     case 'give': {
       const r = state.agents[action.recipientId];
       if (!r || r.id === a.id) return fail(state, a, act, `no recipient ${action.recipientId}`);
+      if (r.fly) return fail(state, a, act, `${r.id} is a fruit fly; it cannot take things`);
       if (r.status === 'dead') return fail(state, a, act, `${r.id} is dead`);
       if (!a.items.some((x) => x.id === action.itemId)) return fail(state, a, act, `not carrying ${action.itemId}`);
       if (r.items.length >= r.capacity) return fail(state, a, act, `${r.id} inventory full`);
@@ -405,6 +407,11 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
       const st = state.structures[id];
       if (st && inRange(st.position)) return ok(state, a, act, `${id}: ${st.kind} built by ${st.builderId}${st.text ? `, reads "${st.text}"` : ''}`);
       const ag = state.agents[id];
+      if (ag?.fly && inRange(ag.position)) {
+        const f = ag.fly;
+        const doing = ag.status === 'dead' ? 'dead' : f.flight ? 'flying' : f.feeding ? 'feeding with its proboscis out' : f.speed > 0.05 ? 'walking' : 'still';
+        return ok(state, a, act, `${id}: a small fruit fly with red eyes and a striped abdomen, ${doing}; it cannot talk`);
+      }
       if (ag && ag.id !== a.id && inRange(ag.position))
         return ok(state, a, act, `${id}: ${ag.status}, looks ${ag.health > 60 ? 'healthy' : ag.health > 25 ? 'hurt' : 'badly hurt'}, carrying ${ag.items.length} items`);
       return fail(state, a, act, `cannot see ${id}`);
@@ -457,6 +464,7 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
     case 'court': {
       const t = state.agents[action.agentId];
       if (!t || t.id === a.id) return fail(state, a, act, `no creature ${action.agentId}`);
+      if (t.fly) return fail(state, a, act, `${t.id} is a fruit fly, not one of your kind`);
       if (t.status === 'dead') return fail(state, a, act, `${t.id} is dead`);
       if (stageOf(state, a) === 'child') return fail(state, a, act, 'you are still a child');
       if (stageOf(state, t) === 'child') return fail(state, a, act, `${t.id} is still a child`);
@@ -543,6 +551,46 @@ export function runAction(state: WorldState, a: Agent, act: ActiveAction, dt: nu
       item.label = cooked.label;
       item.spoilsAt = state.time + (ITEMS[cooked.kind].spoilSec ?? 120);
       return ok(state, a, act, `cooked ${before} → ${cooked.label}`);
+    }
+
+    case 'swat': {
+      const t = state.agents[action.flyId];
+      if (!t?.fly) return fail(state, a, act, t ? `${t.id} is not a fly` : `no fly ${action.flyId}`);
+      if (t.status === 'dead') return fail(state, a, act, `${t.id} is already dead`);
+      const f = t.fly;
+      // Strike under way: resolve at impact. Whether the fly escapes is up to its own brain (looming → Giant Fiber).
+      if (act.progress >= 2 && f.threat?.by === a.id) {
+        if (state.time < f.threat.end) return 'ongoing';
+        const hit = !f.flight && dist(a.position, t.position) <= CONFIG.swatReach + 0.6;
+        if (hit) {
+          t.deathCause = `swatted by ${a.id}`;
+          killAgent(state, t);
+          return ok(state, a, act, `swatted ${t.id}; it is dead`);
+        }
+        return fail(state, a, act, f.flight ? `missed ${t.id}: it took off just before your hand landed` : `missed ${t.id}: it walked out from under your hand`);
+      }
+      if (state.time - act.startedAt > 12) return fail(state, a, act, `could not catch ${t.id}`);
+      const d = dist(a.position, t.position);
+      if (d > senseRadius(state, a) + 1) return fail(state, a, act, `lost sight of ${t.id}`);
+      if (f.flight) {
+        // Out of reach in the air: wait for it to land.
+        a.target = null;
+        act.progress = 1;
+        return 'ongoing';
+      }
+      if (d > CONFIG.swatReach) {
+        act.progress = 1;
+        a.target = { ...t.position };
+        if (stepToward(state, a, dt, CONFIG.swatReach * 0.8) === 'blocked') return fail(state, a, act, 'path blocked');
+        return 'ongoing';
+      }
+      // Wind-up and strike: the hand sweeps onto the fly over swatStrikeSec, looming in its eyes.
+      a.target = null;
+      a.stamina = Math.max(0, a.stamina - CONFIG.swatStaminaCost);
+      t.fly = { ...f, threat: { by: a.id, from: { ...a.position }, start: state.time, end: state.time + CONFIG.swatStrikeSec } };
+      act.progress = 2;
+      a.lastVisibleAct = { text: `swatting at ${t.id}`, until: state.time + 2 };
+      return 'ongoing';
     }
 
     case 'deposit':

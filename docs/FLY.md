@@ -68,13 +68,39 @@ Each fly in fruit-fly mode is driven by its own copy of a spiking circuit extrac
 - **Aversive learning is not demonstrated:** bitter-paired flies end up like odor-only flies. Bitter does suppress feeding (MN9).
 - **Browser:** the first fly finds and feeds on a nearby berry bush using its MN9 output.
 
+## Escape, vision and hearing (mixed world)
+
+The circuit also includes the looming-detector visual projection neurons LC4 (104) and LPLC2 (210) of each optic lobe, the Johnston's organ auditory neurons JO-A/JO-B (341), and the two Giant Fiber descending neurons (DNp01). `tools/fly/extract.py` adds looming and sound conditions to the pruning, which grew the circuit to 8,025 neurons and 629,218 synapses (13,865 plastic KC→MBON). The odor calibration was re-run and is essentially unchanged.
+
+Whole-brain probe (`tools/fly/probe_escape.py`, 500 ms, Python LIF):
+- Looming on the left eye at 200 Hz: GF_L 256 Hz, GF_R 148 Hz (ipsilateral dominance). 30 Hz already gives about 60 Hz in the GF.
+- Looming on one side excites DNa02/DNa01 on the opposite side, so flies turn away from an approaching object without any added rule.
+- Auditory JO input (150 Hz, both sides) reaches the right GF (78 Hz) but not the left. Left-only JO input: no GF activity. This asymmetry is what the connectome gives.
+- GF is silent under all odor and taste conditions.
+
+Runtime (`scripts/fly/escape.ts`; 8 flies; takeoff when GF fires ≥ 3 spikes in a 50 ms tick):
+- No input for 10 s: 0/8 takeoffs. Odor: 0/8.
+- A creature walking in to 1.3 units: 2/8. Sprinting: 8/8.
+- A seen swat: 8/8 escape. A swat from the rear blind spot: 0/8.
+- Speech 1 unit away: 8/8. Speech 3 units away: 0/8.
+
+Body-level rules (not neural) in this layer:
+- Looming geometry: angular size 2·atan(R/d) and expansion rate for approaching agents and a swatting hand, per eye, with a rear blind spot of ±20°. Encoding into LC4 (rate) and LPLC2 (size × speed) Hz.
+- Sound level from recent speech and nearby fly buzzing.
+- The GF spike threshold, the escape direction (away from the looming source), and the flight itself (1.2–2.4 s at 6 units/s over obstacles).
+- Nibbling carried/dropped food (it rots sooner), egg laying on sweet food by well-fed flies, and hatching into flies with naive brains.
+- The buzz sounds shown in bubbles ("BZZZT!", "suiii~"). Wingbeat buzz is physical; the words are playful, and flies have no voice.
+
+PPL1 activity seen in flies near fruit comes from odor, not from looming (looming alone: 0 Hz), so there is no fear learning from threats.
+
 ## Performance
 
-- About 240 ms of CPU per simulated second for a fly smelling food, and about 25 ms for a fly smelling nothing (Node, one core).
+- 8,025-neuron circuit: about 390 ms of CPU per simulated second for a fly smelling food, about 50 ms for a fly smelling nothing, and about 240 ms while looming (Node, one core; `scripts/fly/bench-cpu.ts`). The earlier 5,966-neuron circuit took about 290 ms and 45 ms on the same machine.
+- Previous measurement (5,966-neuron circuit): about 240 ms of CPU per simulated second for a fly smelling food, and about 25 ms for a fly smelling nothing.
 - Cost is dominated by antennal-lobe local neurons at their firing ceiling.
 - Adding spike-frequency adaptation to them was tried. It lowered their rates but not the total cost, and it degraded laterality, so it was not kept.
 - The driver runs flies on up to 8 Web Workers (5 per worker). It slows the fly world when brains lag, rather than letting flies act on stale motor commands.
 
 ## Regenerating
 
-See `tools/fly/README.md`. The public circuit (`public/fly/circuit.json`, 7 MB) and calibration are committed, so regeneration is optional.
+See `tools/fly/README.md`. The public circuit (`public/fly/circuit.json`, 10 MB) and calibration are committed, so regeneration is optional.

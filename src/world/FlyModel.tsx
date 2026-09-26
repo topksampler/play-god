@@ -115,14 +115,14 @@ const damp = (a: number, b: number, k: number) => a + (b - a) * k;
  * Stylised Drosophila facing +Z, standing on y=0, ~0.9 units long at scale 1.
  * 17 meshes; geometry and materials are shared across all flies. `color` tints the ground marker ring.
  */
-export function FlyModel({ color, feeding, moving, dead, scale = 1 }: { color: string; feeding: boolean; moving: boolean; dead: boolean; scale?: number }) {
+export function FlyModel({ color, feeding, moving, dead, flying = false, scale = 1 }: { color: string; feeding: boolean; moving: boolean; dead: boolean; flying?: boolean; scale?: number }) {
   const root = useRef<Group>(null);
   const body = useRef<Group>(null);
   const head = useRef<Group>(null);
   const prob = useRef<Mesh>(null);
   const wings = useRef<(Group | null)[]>([]);
   const legs = useRef<(Group | null)[]>([]);
-  const st = useMemo(() => ({ phase: Math.random() * 10, t: Math.random() * 10, gait: 0, feed: 0, flip: dead ? 1 : 0 }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const st = useMemo(() => ({ phase: Math.random() * 10, t: Math.random() * 10, gait: 0, feed: 0, flip: dead ? 1 : 0, air: 0 }), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 0.1);
@@ -131,6 +131,7 @@ export function FlyModel({ color, feeding, moving, dead, scale = 1 }: { color: s
     st.gait = damp(st.gait, moving && !dead ? 1 : 0, k);
     st.feed = damp(st.feed, feeding && !dead ? 1 : 0, k);
     st.flip = damp(st.flip, dead ? 1 : 0, k * 0.6);
+    st.air = damp(st.air, flying && !dead ? 1 : 0, 1 - Math.exp(-dt * 20));
     st.phase += dt * 16 * st.gait;
 
     const r = root.current;
@@ -153,8 +154,10 @@ export function FlyModel({ color, feeding, moving, dead, scale = 1 }: { color: s
       const w = wings.current[i];
       if (!w) continue;
       const side = i === 0 ? 1 : -1;
-      w.rotation.y = -side * (0.22 + 0.9 * st.flip);
-      w.rotation.z = side * (buzz + 0.05);
+      // In flight the wings spread and beat fast (drawn as a blur-like sweep).
+      const beat = Math.sin(st.t * 95 + i * Math.PI) * 0.9 * st.air;
+      w.rotation.y = -side * (0.22 + 0.9 * st.flip + 0.9 * st.air);
+      w.rotation.z = side * (buzz + 0.05 + beat);
     }
     for (let i = 0; i < LEGS.length; i++) {
       const l = legs.current[i];
@@ -165,7 +168,7 @@ export function FlyModel({ color, feeding, moving, dead, scale = 1 }: { color: s
       const lift = Math.max(0, Math.cos(ph)) * 0.28 * st.gait;
       const curl = st.flip * 0.5 + Math.sin(st.t * 9 + i) * 0.08 * st.flip;
       l.rotation.y = swing * side;
-      l.rotation.z = (lift + curl) * side;
+      l.rotation.z = (lift + curl + 0.6 * st.air) * side;
     }
   });
 

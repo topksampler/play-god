@@ -186,28 +186,40 @@ export function sampleFreeSpot(
 }
 
 /** Living-population cap for the Spawn controls: plan agents, or flies (also bounded by brain-worker capacity). */
-export function populationLimit(state: WorldState): number {
-  return state.mode === 'flies' ? Math.min(CONFIG.maxFlies, state.flyCapacity ?? CONFIG.maxFlies) : CONFIG.maxAgents;
+/** Which creature kinds may live in a world of this mode. */
+export const allowsFlies = (state: WorldState) => state.mode !== 'agents';
+export const allowsAgents = (state: WorldState) => state.mode !== 'flies';
+
+/**
+ * Living-population cap for the Spawn controls, per kind: plan agents, or flies (also bounded by brain-worker capacity).
+ * Defaults to the world's own population type (flies in a fly world, agents otherwise).
+ */
+export function populationLimit(state: WorldState, kind: 'agents' | 'flies' = state.mode === 'flies' ? 'flies' : 'agents'): number {
+  return kind === 'flies' ? Math.min(CONFIG.maxFlies, state.flyCapacity ?? CONFIG.maxFlies) : CONFIG.maxAgents;
 }
 
-export function spawnAgents(state: WorldState, count: number, controller: ControllerKind, tier: AgentTier, rng: Rng): string[] {
+export const livingOfKind = (state: WorldState, kind: 'agents' | 'flies') =>
+  Object.values(state.agents).filter((a) => a.status !== 'dead' && Boolean(a.fly) === (kind === 'flies')).length;
+
+export function spawnAgents(state: WorldState, count: number, controller: ControllerKind, tier: AgentTier, rng: Rng, near?: Vec2): string[] {
   const spawned: string[] = [];
-  const flies = state.mode === 'flies';
-  if (flies !== (controller === 'fly')) {
+  const flies = controller === 'fly';
+  if (flies ? !allowsFlies(state) : !allowsAgents(state)) {
     logEvent(state, { kind: 'spawn', ok: false, text: `Spawn rejected: ${controller} creatures cannot enter ${state.mode} mode` });
     return spawned;
   }
-  const limit = populationLimit(state);
-  const room = limit - Object.values(state.agents).filter((a) => a.status !== 'dead').length;
+  const kind = flies ? 'flies' : 'agents';
+  const limit = populationLimit(state, kind);
+  const room = limit - livingOfKind(state, kind);
   if (room <= 0) {
     logEvent(state, { kind: 'spawn', ok: false, text: flies ? `Spawn rejected: max ${limit} living flies` : `Spawn rejected: max ${limit} living agents via Spawn (births can go beyond)` });
     return spawned;
   }
   const n = Math.min(count, room);
   // Spawn around the central meadow so newcomers begin somewhere survivable.
-  const home = state.biomes[4]?.site;
+  const home = near ?? state.biomes[4]?.site;
   for (let i = 0; i < n; i++) {
-    const p = (home && sampleFreeSpot(state, rng, { near: home, within: flies ? 14 : 10 })) || sampleFreeSpot(state, rng);
+    const p = (home && sampleFreeSpot(state, rng, { near: home, within: near ? 4 : flies ? 14 : 10 })) || sampleFreeSpot(state, rng);
     if (!p) {
       logEvent(state, { kind: 'spawn', ok: false, text: 'Spawn rejected: no free spot found' });
       break;
@@ -388,8 +400,17 @@ export function createInitialWorld(
   const firstController: ControllerKind = mode === 'flies' ? 'fly' : state.defaultController;
   const first = createAgent(state, start, firstController, state.defaultTier, rng);
   state.agents[first.id] = first;
+  state.flyEggs = [];
+  state.flySounds = [];
   logEvent(state, { kind: 'system', ok: true, text: `Run ${runId} started (seed ${seed}, comm ${state.experiment.commMode}, food ${state.experiment.scarcity}${state.experiment.traits ? ', traits on' : ''})` });
   if (mode === 'flies') logEvent(state, { kind: 'system', ok: true, text: 'Fruit-fly mode: each fly is driven by its own connectome circuit' });
   logEvent(state, { kind: 'spawn', agentId: first.id, ok: true, text: `Spawned ${first.id} (${firstController === 'fly' ? 'connectome fly' : firstController})` });
+  if (mode === 'mixed') {
+    logEvent(state, { kind: 'system', ok: true, text: 'Mixed world: plan agents and connectome fruit flies share the habitat' });
+    spawnAgents(state, CONFIG.mixedStartAgents - 1, state.defaultController, state.defaultTier, rng, first.position);
+    // Flies start a little way off, near the same fruit, so the first meeting happens early.
+    const fruit = bush?.position ?? start;
+    spawnAgents(state, CONFIG.mixedStartFlies, 'fly', state.defaultTier, rng, { x: fruit.x + 3, z: fruit.z + 3 });
+  }
   return state;
 }

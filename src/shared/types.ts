@@ -2,8 +2,8 @@
 
 export type Vec2 = { x: number; z: number };
 export type ControllerKind = 'scripted' | 'llm' | 'fly';
-/** Which population inhabits the world: plan-based agents (LLM/scripted) or connectome-driven fruit flies. */
-export type WorldMode = 'agents' | 'flies';
+/** Which population inhabits the world: plan-based agents (LLM/scripted), connectome-driven fruit flies, or both together. */
+export type WorldMode = 'agents' | 'flies' | 'mixed';
 /** LLM model tier for in-world agents: fast = Haiku, smart = Sonnet (server maps tier → model). */
 export type AgentTier = 'fast' | 'smart';
 
@@ -76,6 +76,7 @@ export type Action =
   | { type: 'cook'; itemId: string }
   | { type: 'deposit'; cacheId: string; itemId: string }
   | { type: 'withdraw'; cacheId: string; itemId: string }
+  | { type: 'swat'; flyId: string }
   | { type: 'wait' };
 export type ActionType = Action['type'];
 
@@ -154,6 +155,10 @@ export type Observation = {
   visibleGroundItems: { id: string; label: string; position: Vec2; distance: number }[];
   messages: Message[];
   recentOutcomes: { actionType: ActionType; ok: boolean; detail: string }[];
+  /** Mixed worlds only: fruit flies in sight (they are not agents and cannot talk). */
+  visibleFlies?: { id: string; position: Vec2; distance: number; bearing: string; doing: 'walking' | 'feeding' | 'flying' | 'still' | 'dead'; facing?: 'toward you' | 'away from you' | 'sideways'; onYou?: boolean }[];
+  /** Mixed worlds only: fly sounds heard in the last few seconds. */
+  heardBuzzing?: { flyId: string; sound: string; distance: number; bearing: string }[];
 };
 
 export interface Controller {
@@ -191,7 +196,16 @@ export type FlyReadout = {
   steer: number;
   valence: number;
   brainDriven: number;
+  /** Looming input to the LC4/LPLC2 visual neurons of each eye, and the Giant Fiber (DNp01) spike rate on each side. */
+  loom?: [number, number];
+  gf?: [number, number];
+  /** Input to the Johnston's organ auditory neurons, and summed activity of the neurons they drive (Hz). */
+  hearing?: number;
+  auditory?: number;
 };
+
+/** A takeoff in progress. Triggered by a Giant Fiber spike; the flight itself is a body-level rule (flight motor control is not simulated). */
+export type FlyFlight = { since: number; until: number; heading: number; speed: number; from: Vec2; reason: string };
 
 /** Low-level motor state of a fly body, written only by `flyMotors` commands from the fly brain driver. */
 export type FlyBodyState = {
@@ -205,9 +219,22 @@ export type FlyBodyState = {
   lastTaste: { at: number; sugar: boolean; bitter: boolean; ate: boolean } | null;
   feedProgress: number;
   brainStatus: 'loading' | 'running' | 'error';
+  /** Airborne escape, or null while walking. */
+  flight?: FlyFlight | null;
+  landedAt?: number;
+  /** An incoming swat: the hand sweeps from `from` onto the fly between start and end (the fly's eyes see it loom). */
+  threat?: { by: string; from: Vec2; start: number; end: number } | null;
+  escapes?: number;
+  eggsLaid?: number;
+  /** Sim time of the last sound this fly made (rate limit). */
+  lastSoundAt?: number;
+  /** Carried food this fly is nibbling: owner agent id. */
+  nibbling?: string | null;
 };
 
-export type FlyMotorCommand = { agentId: string; turnRate: number; speed: number; feeding: boolean; readout: FlyReadout };
+export type FlyMotorCommand = { agentId: string; turnRate: number; speed: number; feeding: boolean; readout: FlyReadout; escape?: boolean };
+export type FlyEgg = { id: string; position: Vec2; laidAt: number; hatchAt: number; parent: string };
+export type FlySound = { at: number; flyId: string; text: string; where: Vec2 };
 
 /** The action currently executing (possibly still approaching its target). */
 /** Per-agent history, recorded by the simulator (truth), grouped by decision turn. */
@@ -285,6 +312,8 @@ export type Agent = {
   messagesHeard: number;
   /** Present only for fruit flies (controller kind 'fly'). */
   fly: FlyBodyState | null;
+  /** Last time a fly feeding on this agent's food interrupted it (rate limit). */
+  flyAnnoyedAt?: number;
 };
 
 export type ResourceNode = {
@@ -382,6 +411,9 @@ export type WorldState = {
   contextBase: { samples: number; counts: Record<string, number> };
   /** Recent actual deliveries, for rendering comm lines. */
   deliveries: Delivery[];
+  /** Fruit flies: eggs waiting to hatch, and recent buzzes (mixed / fly worlds). Optional so older exports still load. */
+  flyEggs?: FlyEgg[];
+  flySounds?: FlySound[];
   events: SimEvent[];
   eventSeq: number;
   history: WorldSample[];

@@ -5,7 +5,7 @@ import type { HealthResponse } from '../shared/schemas';
 import type { Agent, AgentTier, ControllerKind, NodeKind, SimCommand } from '../shared/types';
 import { timeOfDay, worldClock } from '../sim/environment';
 import { useSim, useWorldThrottled } from '../sim/react';
-import { populationLimit } from '../sim/world';
+import { livingOfKind, populationLimit } from '../sim/world';
 import { GodCommand } from './GodCommand';
 import { Sparkline } from './charts/Sparkline';
 import { Dossier, type DossierTab } from './Dossier';
@@ -37,7 +37,7 @@ function FlyBrainStatus() {
   const slow = st.realtimeFactor < 1;
   return (
     <div className={`status ${slow ? 'warn' : 'ok'}`}>
-      {st.flies} fly brains on {st.workers} workers (capacity {st.capacity}) · brain speed {st.realtimeFactor.toFixed(2)}× real time
+      {st.flies} fly brains × {st.neurons.toLocaleString()} neurons on {st.workers} workers (capacity {st.capacity}) · brain speed {st.realtimeFactor.toFixed(2)}× real time
       {slow && <div className="small">Brains are slower than real time, so the world runs in slow motion to keep every fly in step with its brain.</div>}
       {st.lastError && <div className="small err">{st.lastError}</div>}
     </div>
@@ -66,8 +66,13 @@ function FlyInspector({ agent, now }: { agent: Agent; now: number }) {
         <br />
         taste: {f.lastTaste && now - f.lastTaste.at < 0.3 ? `${f.lastTaste.sugar ? 'sugar/water ' : ''}${f.lastTaste.bitter ? 'bitter' : ''}` || 'neutral' : 'nothing'}
         {f.feeding && ' · proboscis extended'}
+        {f.flight && now < f.flight.until && <b> · AIRBORNE ({f.flight.reason})</b>}
+        {f.nibbling && <span> · nibbling {f.nibbling}'s food</span>}
+        <br />
+        escapes {f.escapes ?? 0} · eggs laid {f.eggsLaid ?? 0} · generation {agent.generation}{agent.parents.length ? ` (hatched from ${agent.parents[0]}'s egg)` : ''}
+        {agent.deathCause && <span className="err"> · died: {agent.deathCause}</span>}
       </div>
-      <h3>Brain readouts (spikes from its own 5,966-neuron circuit)</h3>
+      <h3>Brain readouts (spikes from its own connectome circuit)</h3>
       {r ? (
         <div className="kv">
           DNa02 steering L {f0(r.dna02[0])} / R {f0(r.dna02[1])} Hz · DNa01 L {f0(r.dna01[0])} / R {f0(r.dna01[1])} Hz
@@ -79,11 +84,22 @@ function FlyInspector({ agent, now }: { agent: Agent; now: number }) {
           learned odor valence (own KC→MBON weight change) {r.valence.toFixed(3)}
           <br />
           steering signal {f1(r.steer)} Hz → turn {f1(f.turnRate)} rad/s · brain share of turning {f0(r.brainDriven * 100)}%
+          {r.gf && (
+            <>
+              <br />
+              eyes: looming input to LC4 L {f0(r.loom?.[0] ?? 0)} / R {f0(r.loom?.[1] ?? 0)} Hz · Giant Fiber (DNp01) L {f0(r.gf[0])} / R {f0(r.gf[1])} Hz
+              <br />
+              ears: Johnston's organ (JO-A/B) input {f0(r.hearing ?? 0)} Hz
+            </>
+          )}
         </div>
       ) : (
         <div className="kv">waiting for first brain tick…</div>
       )}
-      <div className="small">Body-level rules (not neural): walking speed, exploratory turning noise, collision side-step, hunger gain on sensory input.</div>
+      <div className="small">
+        Body-level rules (not neural): walking speed, exploratory turning noise, collision side-step, hunger gain on sensory input, looming/sound geometry
+        feeding the eyes and ears, escape direction and flight after a Giant Fiber spike, egg laying, and the playful buzz sounds.
+      </div>
       {agent.controller.lastError && <div className="err small">brain error: {agent.controller.lastError}</div>}
       <SmiteButton agent={agent} />
     </div>
@@ -117,11 +133,19 @@ export function Panel({
   const world = useWorldThrottled(400);
   const [view, setView] = useState<'world' | 'agent' | 'lab'>('agent');
   const agents = Object.values(world.agents);
-  const count = agents.filter((a) => a.status !== 'dead').length;
   const flyMode = world.mode === 'flies';
-  // The fruit-fly tab is off unless the server enables it (ENABLE_FLY_MODE); still shown if already in fly mode so you can leave it.
-  const flyTab = Boolean(health?.features?.flyMode) || flyMode;
-  const limit = populationLimit(world);
+  const mixed = world.mode === 'mixed';
+  const agentCount = livingOfKind(world, 'agents');
+  const flyCount = livingOfKind(world, 'flies');
+  const agentLimit = populationLimit(world, 'agents');
+  const flyLimit = populationLimit(world, 'flies');
+  const setMode = (mode: 'agents' | 'mixed' | 'flies') => {
+    if (world.mode === mode) return;
+    edit({ type: 'reset', mode });
+    onSelect(mode === 'flies' ? 'f1' : 'a1');
+  };
+  // The fruit-fly tab is off unless the server enables it (ENABLE_FLY_MODE); still shown if already in a fly world so you can leave it.
+  const flyTab = Boolean(health?.features?.flyMode) || world.mode !== 'agents';
   const agent = selectedId ? world.agents[selectedId] : undefined;
   const llm = Boolean(health?.llmConfigured);
   const modes: Mode[] = llm ? ['llm:fast', 'llm:smart', 'scripted'] : ['scripted'];
@@ -146,15 +170,30 @@ export function Panel({
         <h1>Let's Play God</h1>
         {flyTab && (
         <div className="modes" role="tablist">
-          <button className={flyMode ? '' : 'on'} onClick={() => { if (flyMode) { edit({ type: 'reset', mode: 'agents' }); onSelect('a1'); } }}>
+          <button className={world.mode === 'agents' ? 'on' : ''} onClick={() => setMode('agents')}>
             LLM agents
           </button>
-          <button className={flyMode ? 'on' : ''} onClick={() => { if (!flyMode) { edit({ type: 'reset', mode: 'flies' }); onSelect('f1'); } }}>
-            Fruit flies (connectome)
+          <button className={mixed ? 'on' : ''} onClick={() => setMode('mixed')}>
+            Agents + flies
+          </button>
+          <button className={flyMode ? 'on' : ''} onClick={() => setMode('flies')}>
+            Fruit flies
           </button>
         </div>
         )}
-        {flyMode ? (
+        {mixed ? (
+          <>
+            <div className="small">
+              LLM agents and connectome fruit flies share one world. Flies smell the food agents carry and nibble it; their own looming-detector neurons (LC4/LPLC2)
+              and ears (Johnston's organ) drive their own Giant Fiber, which triggers the escape. Agents see and hear the flies and can swat them. Flies cannot talk.
+            </div>
+            <div className={`status ${llm ? 'ok' : 'warn'}`}>
+              {health ? health.detail : 'checking server…'}
+              {!llm && <div className="small">LLM unavailable — only the labelled SCRIPTED baseline can run.</div>}
+            </div>
+            <FlyBrainStatus />
+          </>
+        ) : flyMode ? (
           <>
             <div className="small">
               Each fly runs its own spiking model of 5,966 FlyWire neurons (whole-brain model of Shiu et al., pruned to the neurons its senses reach). Odor steers it via
@@ -177,26 +216,27 @@ export function Panel({
             <button key={x} className={`chip-btn ${speed === x ? 'on' : ''}`} onClick={() => store.setSpeed(x)}>{x}×</button>
           ))}
         </div>
-        {flyMode ? (
+        {(flyMode || mixed) && (
           <div className="row">
-            {[1, 5, 10].map((n) => (
-              <button key={n} disabled={count >= limit} onClick={() => edit({ type: 'spawnAgents', count: n, controller: 'fly' })}>
+            {(mixed ? [1, 3] : [1, 5, 10]).map((n) => (
+              <button key={n} disabled={flyCount >= flyLimit} onClick={() => edit({ type: 'spawnAgents', count: n, controller: 'fly' })}>
                 Spawn {n} {n === 1 ? 'fly' : 'flies'}
               </button>
             ))}
-            <span className="small">{count}/{limit}</span>
+            <span className="small">{flyCount}/{flyLimit} flies</span>
           </div>
-        ) : (
+        )}
+        {flyMode ? null : (
           <div className="row">
             <select value={modeOf(world.defaultController, world.defaultTier)} onChange={(e) => edit({ type: 'setDefaultController', ...parseMode(e.target.value as Mode) })}>
               {modes.map((m) => <option key={m} value={m}>new: {modeLabel(m)}</option>)}
             </select>
             {[1, 3].map((n) => (
-              <button key={n} disabled={count >= limit} onClick={() => edit({ type: 'spawnAgents', count: n, controller: world.defaultController, tier: world.defaultTier })}>
+              <button key={n} disabled={agentCount >= agentLimit} onClick={() => edit({ type: 'spawnAgents', count: n, controller: world.defaultController, tier: world.defaultTier })}>
                 Spawn {n}
               </button>
             ))}
-            <span className="small">{count}/{limit}</span>
+            <span className="small">{agentCount}/{agentLimit}{mixed ? ' agents' : ''}</span>
           </div>
         )}
         <div className="agent-chips">

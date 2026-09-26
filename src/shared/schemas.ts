@@ -32,6 +32,7 @@ export const ActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('cook'), itemId: id }),
   z.object({ type: z.literal('deposit'), cacheId: id, itemId: id }),
   z.object({ type: z.literal('withdraw'), cacheId: id, itemId: id }),
+  z.object({ type: z.literal('swat'), flyId: id }),
   z.object({ type: z.literal('wait') }),
 ]);
 
@@ -77,7 +78,7 @@ export const WorldEditSchema = z.discriminatedUnion('type', [
 export const WorldCommandRequestSchema = z.object({
   text: z.string().trim().min(1).max(500),
   world: z
-    .looseObject({ mode: z.enum(['agents', 'flies']) })
+    .looseObject({ mode: z.enum(['agents', 'flies', 'mixed']) })
     .refine((w) => JSON.stringify(w).length < 24000, 'world snapshot too large'),
 });
 export type WorldCommandRequest = z.infer<typeof WorldCommandRequestSchema>;

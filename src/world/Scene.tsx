@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import { type Group, type Mesh, type Vector3 } from 'three';
 import { CONFIG } from '../shared/config';
-import type { Agent } from '../shared/types';
+import type { Agent, WorldState } from '../shared/types';
 import { senseRadius } from '../sim/environment';
 import { dist } from '../sim/geometry';
 import { useSim, useWorldThrottled } from '../sim/react';
@@ -77,7 +77,11 @@ function FlyAgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: b
     const k = 1 - Math.exp(-dt * 12);
     g.position.x += (a.position.x - g.position.x) * k;
     g.position.z += (a.position.z - g.position.z) * k;
-    g.position.y = terrain.surface(g.position.x, g.position.z);
+    // Escape flights arc up and back down (altitude is cosmetic; the simulator is 2D).
+    const fl = a.fly?.flight;
+    const t = store.getState().time;
+    const alt = fl && t < fl.until ? Math.sin(Math.min(1, (t - fl.since) / (fl.until - fl.since)) * Math.PI) * 2.2 : 0;
+    g.position.y = terrain.surface(g.position.x, g.position.z) + alt;
     g.rotation.y = -a.heading + Math.PI / 2;
   });
   const f = agent.fly!;
@@ -90,7 +94,7 @@ function FlyAgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: b
           onSelect();
         }}
       >
-        <FlyModel color={agent.color} feeding={f.feeding} moving={f.speed > 0.05} dead={dead} scale={1} />
+        <FlyModel color={agent.color} feeding={f.feeding} moving={f.speed > 0.05} dead={dead} flying={Boolean(f.flight)} scale={1} />
       </group>
       {selected ? (
         <Label
@@ -106,6 +110,65 @@ function FlyAgentMesh({ agent, selected, onSelect }: { agent: Agent; selected: b
         <Label position={[0, 1.1, 0]} lines={[agent.id]} bg="rgba(20,24,32,0.55)" />
       )}
     </group>
+  );
+}
+
+/** The hand of a swat in progress, sweeping from the swatter onto the fly (drawn from actual simulator state). */
+function SwatHand({ flyId, terrain }: { flyId: string; terrain: TerrainModel }) {
+  const store = useSim();
+  const ref = useRef<Mesh>(null);
+  useFrame(() => {
+    const s = store.getState();
+    const fly = s.agents[flyId];
+    const t = fly?.fly?.threat;
+    const m = ref.current;
+    if (!m) return;
+    // Shown during the strike and briefly at the point of impact.
+    if (!fly || !t || s.time > t.end + 0.35 || s.time < t.start) {
+      m.visible = false;
+      return;
+    }
+    const p = Math.min(1, Math.max(0, (s.time - t.start) / (t.end - t.start)));
+    const x = t.from.x + (fly.position.x - t.from.x) * p;
+    const z = t.from.z + (fly.position.z - t.from.z) * p;
+    m.visible = true;
+    m.position.set(x, terrain.surface(x, z) + 1.3 * (1 - p) + 0.12, z);
+  });
+  return (
+    <mesh ref={ref} scale={[0.34, 0.1, 0.42]} castShadow>
+      <sphereGeometry args={[1, 14, 10]} />
+      <meshStandardMaterial color="#e8b48a" roughness={0.7} />
+    </mesh>
+  );
+}
+
+/** Fly eggs, recent fly sounds, and swats in progress. */
+function FlyLife({ world, terrain }: { world: WorldState; terrain: TerrainModel }) {
+  const said = new Map<string, string>();
+  for (const s of world.flySounds ?? []) if (world.time - s.at < 1.8) said.set(s.flyId, s.text);
+  return (
+    <>
+      {(world.flyEggs ?? []).map((e) => (
+        <mesh key={e.id} position={[e.position.x, terrain.surface(e.position.x, e.position.z) + 0.05, e.position.z]} scale={[0.07, 0.05, 0.11]}>
+          <sphereGeometry args={[1, 8, 6]} />
+          <meshStandardMaterial color="#fbf7ea" roughness={0.4} />
+        </mesh>
+      ))}
+      {[...said.entries()].map(([id, text]) => {
+        const a = world.agents[id];
+        if (!a) return null;
+        const fl = a.fly?.flight;
+        const alt = fl && world.time < fl.until ? 2.2 : 0;
+        return (
+          <Label key={`s-${id}`} position={[a.position.x, terrain.surface(a.position.x, a.position.z) + 1.6 + alt, a.position.z]} bg="rgba(255,244,200,0.95)" outline="#c99a2e" lines={[`🪰 ${text}`]} dark />
+        );
+      })}
+      {Object.values(world.agents)
+        .filter((a) => a.fly)
+        .map((a) => (
+          <SwatHand key={`h-${world.runId}-${a.id}`} flyId={a.id} terrain={terrain} />
+        ))}
+    </>
   );
 }
 
@@ -206,6 +269,9 @@ function DevHook() {
   useEffect(() => {
     if (!import.meta.env.DEV || !controls) return;
     (window as unknown as { __playgod: unknown }).__playgod = {
+      // Dev-only read access and command dispatch for automated smoke tests.
+      state: () => store.getLiveState(),
+      dispatch: (cmd: Parameters<typeof store.dispatch>[0]) => store.dispatch(cmd),
       setView: (v: { pos?: [number, number, number]; target?: [number, number, number]; timeOffset?: number; weather?: string }) => {
         if (v.pos) camera.position.set(...v.pos);
         if (v.target) controls.target.set(...v.target);
@@ -266,6 +332,7 @@ function World({ selectedId, onSelect, follow }: { selectedId: string | null; on
         ))}
       {selected && <SenseRing center={selected.position} radius={range} color={selected.color} terrain={terrain} />}
       <CommsLayer world={world} terrain={terrain} />
+      {world.mode !== 'agents' && <FlyLife world={world} terrain={terrain} />}
       {Object.values(world.agents).map((a) =>
         a.fly ? (
           <FlyAgentMesh key={`${world.runId}-${a.id}`} agent={a} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} />

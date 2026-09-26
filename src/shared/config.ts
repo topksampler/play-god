@@ -62,6 +62,35 @@ export const CONFIG = {
   /** Seconds of proboscis contact needed to ingest one unit of food. */
   flyFeedSecondsPerUnit: 1.5,
   flyOdorSigma: 3,
+  /** Mixed worlds: plan agents and flies spawned at reset. */
+  mixedStartAgents: 2,
+  mixedStartFlies: 3,
+  /** Escape flight after a Giant Fiber spike (body-level rule). */
+  flyFlightSpeed: 6,
+  flyFlightMinSec: 1.2,
+  flyFlightMaxSec: 2.4,
+  flyEscapeCooldownSec: 0.3,
+  /** Rear blind spot of the compound eyes: half-angle (rad) behind the fly that no ommatidium covers. */
+  flyBlindSpotRad: 0.35,
+  flyLoomRange: 7,
+  /** A swat: hand reach and the time from wind-up to impact. */
+  swatReach: 1.3,
+  swatStrikeSec: 0.25,
+  swatStaminaCost: 4,
+  /** Sounds: how far agents hear fly buzzing, and how far flies hear speech. */
+  flyBuzzHearRadius: 7,
+  flyHearSpeechRadius: 5,
+  flySoundGapSec: 3,
+  /** Carried or dropped sweet food smells; flies landing on it nibble and it rots sooner. */
+  carriedOdorStrength: 0.6,
+  flyNibbleSec: 2.5,
+  flyNibbleSpoilSec: 25,
+  flyNibbleEnergy: 6,
+  /** Egg laying on sweet food by well-fed flies; hatch time. */
+  flyEggMinEnergy: 70,
+  flyEggChance: 0.25,
+  flyEggHatchSec: 60,
+  flyMaxEggs: 12,
   /** Living population cap (births stop at this). */
   maxPopulation: 14,
   childSec: 45,

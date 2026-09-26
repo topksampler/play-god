@@ -27,14 +27,15 @@ export function contextTags(state: WorldState, a: Agent): string[] {
   if (a.energy < 40) tags.add('hungry');
   if (a.hydration < 40) tags.add('thirsty');
   if (a.items.some((i) => ['berries', 'fruit', 'mushroom', 'fish', 'cooked_fish', 'cactus_fruit', 'honey', 'cooked_mushroom'].includes(i.kind))) tags.add('carrying-food');
-  if (Object.values(state.agents).some((o) => o.id !== a.id && o.status !== 'dead' && dist(o.position, a.position) < 4)) tags.add('agent-close');
+  if (Object.values(state.agents).some((o) => o.id !== a.id && o.status !== 'dead' && !o.fly && dist(o.position, a.position) < 4)) tags.add('agent-close');
   if (timeOfDay(worldClock(state)) === 'night') tags.add('night');
   if (state.weather === 'storm') tags.add('storm');
   return [...tags].sort();
 }
 
+/** Plan agents that can hear speech/signals from `a`. Flies have no language; they hear sound through their own sensors. */
 export function hearersOf(state: WorldState, a: Agent, radius = CONFIG.commRadius) {
-  return Object.values(state.agents).filter((r) => r.id !== a.id && r.status !== 'dead' && dist(r.position, a.position) <= radius);
+  return Object.values(state.agents).filter((r) => r.id !== a.id && r.status !== 'dead' && !r.fly && dist(r.position, a.position) <= radius);
 }
 
 export function recordUtterance(state: WorldState, a: Agent, channel: Utterance['channel'], content: string, hearers: Agent[]) {

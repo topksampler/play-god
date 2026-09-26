@@ -8,10 +8,11 @@ Actions: move (optional sprint), follow, gather, eat, drink, drop, pickup, give,
 
 ## Two modes
 
-Toggle **LLM agents / Fruit flies (connectome)** at the top of the side panel (switching starts a fresh world in that mode). The fruit-fly tab is experimental and hidden unless the server runs with `ENABLE_FLY_MODE=true`.
+Toggle **LLM agents / Agents + flies / Fruit flies** at the top of the side panel (switching starts a fresh world in that mode). The fly tabs are experimental and hidden unless the server runs with `ENABLE_FLY_MODE=true`.
 
 - **LLM agents** — everything above.
-- **Fruit flies (connectome)**: each fly runs its own spiking circuit of 5,966 neurons and 432K synapses from the FlyWire adult *Drosophila* connectome, pruned from the Shiu et al. whole-brain LIF model.
+- **Agents + flies (mixed)**: 2 plan agents and 3 connectome flies share one world; spawn either kind. Flies smell food agents carry or drop and nibble it (it rots sooner); their own looming detectors (LC4/LPLC2) and Johnston's organ drive their own Giant Fiber (DNp01), which triggers an escape flight. Agents see and hear flies and can `swat` them (a fly that sees the hand usually escapes; from its rear blind spot it usually does not). Flies lay eggs that hatch into new flies. Flies cannot talk; their buzz sounds are cosmetic rules.
+- **Fruit flies (connectome)**: each fly runs its own spiking circuit of 8,025 neurons and 629K synapses from the FlyWire adult *Drosophila* connectome, pruned from the Shiu et al. whole-brain LIF model.
   - Odor at its two antennae steers it through the DNa02/DNa01 descending neurons.
   - Tasting sugar drives MN9, the proboscis motor neuron, so it feeds.
   - Dopamine-gated plasticity in its own mushroom body makes it learn from what it tastes.
@@ -76,5 +77,5 @@ Without `ANTHROPIC_API_KEY`, the SDK falls back to an `ant auth login` profile. 
 - Haiku 4.5 decisions take ~3–10 s; agents keep executing their current plan meanwhile.
 - Haiku's minimum cacheable prompt is larger than the current system prompt, so prompt caching only applies on Sonnet.
 - LLM output is non-deterministic; scripted mode is a development baseline, not an LLM.
-- Fly brains are CPU-bound: about 0.25 CPU-s per simulated second for a fly near food, about 10× less for a fly smelling nothing. On a 6-core laptop, about 20 food-seeking flies run in real time; more slow the fly world down.
+- Fly brains are CPU-bound: about 0.39 CPU-s per simulated second for a fly near food, about 0.05 for a fly smelling nothing (8,025-neuron circuit). On a 6-core laptop, about 15 food-seeking flies run in real time; more slow the fly world down.
 - Fly odor is Gaussian plumes (no wind, not blocked by obstacles). Flies do not sense hazards. Walking speed and exploratory turning noise are body-level rules (see docs/FLY.md).

@@ -58,8 +58,9 @@ export function worldStatus(state: WorldState, selectedId: string | null = null)
         energy: Math.round(a.energy),
         hydration: Math.round(a.hydration),
         health: Math.round(a.health),
-        controller: a.controller.kind === 'llm' ? `llm/${a.controller.tier}` : a.controller.kind,
-        doing: a.current?.action.type ?? 'idle',
+        controller: a.controller.kind === 'llm' ? `llm/${a.controller.tier}` : a.controller.kind === 'fly' ? 'connectome fruit fly' : a.controller.kind,
+        doing: a.fly ? (a.fly.flight ? 'flying' : a.fly.feeding ? 'feeding' : a.fly.speed > 0.05 ? 'walking' : 'still') : a.current?.action.type ?? 'idle',
+        ...(a.deathCause ? { deathCause: a.deathCause } : {}),
         carrying: a.items.length,
         ...(a.status !== 'dead'
           ? {
@@ -78,6 +79,7 @@ export function worldStatus(state: WorldState, selectedId: string | null = null)
     structures: Object.values(state.structures).map((s) => ({ id: s.id, kind: s.kind, x: r1(s.position.x), z: r1(s.position.z) })),
     obstacles: Object.keys(state.obstacles).length,
     births: state.births.length,
+    ...(state.mode !== 'agents' ? { flyEggs: (state.flyEggs ?? []).length, flyEscapes: agents.reduce((s, a) => s + (a.fly?.escapes ?? 0), 0) } : {}),
     recentEvents: state.events.slice(-12).map((e) => `${Math.round(e.at)}s ${e.text}`),
   };
 }

@@ -13,7 +13,8 @@ export function stageOf(state: WorldState, a: Agent): LifeStage {
   return 'adult';
 }
 
-export const livingCount = (state: WorldState) => Object.values(state.agents).filter((a) => a.status !== 'dead').length;
+/** Living plan agents (flies do not count toward the land's capacity for births). */
+export const livingCount = (state: WorldState) => Object.values(state.agents).filter((a) => a.status !== 'dead' && !a.fly).length;
 
 export const TRAIT_LOOKS: Record<Trait, string> = { keen_eyes: 'keen-eyed', strong: 'broad and strong', swift: 'lean and quick', hardy: 'tough-skinned' };
 
@@ -101,3 +102,26 @@ export function recordCourtship(state: WorldState, from: Agent, to: Agent) {
 }
 
 export const closeEnough = (a: Agent, b: Agent) => dist(a.position, b.position) <= CONFIG.courtDistance;
+
+/** The single death path: natural causes (health reached 0) or a God edit. */
+export function killAgent(state: WorldState, a: Agent) {
+  a.health = 0;
+  a.deathCause ??= a.poisonedUntil > state.time ? 'poison' : a.energy <= 0 ? 'starvation' : a.hydration <= 0 ? 'dehydration' : 'injury';
+  a.status = 'dead';
+  a.courting = null;
+  a.plan = [];
+  a.current = null;
+  a.target = null;
+  a.controller.needsDecision = false;
+  // Invalidate any decision still in flight for this agent.
+  a.controller.pending = false;
+  a.controller.requestSeq += 1;
+  if (a.fly) {
+    a.fly.speed = 0;
+    a.fly.feeding = false;
+    a.fly.flight = null;
+    a.fly.nibbling = null;
+  }
+  logEvent(state, { kind: 'death', agentId: a.id, ok: false, text: `✝ ${a.id} died of ${a.deathCause} at age ${ageOf(state, a).toFixed(0)}s (gen ${a.generation}, ${a.children.length} children)` });
+  milestone(state, a, `Died of ${a.deathCause} after ${(state.time - a.bornAt).toFixed(0)}s`);
+}

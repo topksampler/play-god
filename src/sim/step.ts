@@ -4,11 +4,11 @@ import type { Agent, AgentMemory, Decision, SimCommand, TimeOfDay, Vec2, Weather
 import { interrupt, recordOutcome, runAction } from './actions';
 import { nearStructure, senseRadius, worldClock } from './environment';
 import { contextTags } from './communication';
-import { ageOf, stageOf, stepLife } from './life';
+import { killAgent, stageOf, stepLife } from './life';
 import { blocked, clampToBounds, dist } from './geometry';
 import { addNode, addObstacle, biomeAt, createInitialWorld, logEvent, milestone, newId, type Rng, sampleFreeSpot, spawnAgents, track } from './world';
 import { NODES } from '../shared/catalog';
-import { applyFlyMotors, stepFly } from './fly';
+import { applyFlyMotors, pruneFlySounds, stepFly, stepFlyEggs } from './fly';
 
 export { runAction };
 
@@ -101,7 +101,7 @@ export function applyWorldEdit(state: WorldState, edit: WorldEdit, source: strin
       if (!a) return log(false, `kill_agent rejected: no creature ${edit.agentId}`);
       if (a.status === 'dead') return log(false, `kill_agent rejected: ${a.id} is already dead`);
       a.deathCause = 'struck down by God';
-      die(state, a);
+      killAgent(state, a);
       return log(true, `struck down ${a.id}`);
     }
     case 'remove_resource':
@@ -138,9 +138,10 @@ export function applyWorldEdit(state: WorldState, edit: WorldEdit, source: strin
     }
     case 'spawn_agents': {
       // Creatures always match the world's population type; plan agents use the current default controller.
-      const controller = state.mode === 'flies' ? 'fly' : edit.controller === 'fly' ? state.defaultController : edit.controller;
+      // Mixed worlds accept both kinds as requested.
+      const controller = state.mode === 'flies' ? 'fly' : state.mode === 'agents' && edit.controller === 'fly' ? state.defaultController : edit.controller;
       const ids = spawnAgents(state, edit.count, controller, state.defaultTier, rng);
-      return log(ids.length > 0, `spawned ${ids.length} ${state.mode === 'flies' ? 'flies' : 'agents'}${ids.length ? `: ${ids.join(', ')}` : ''}`);
+      return log(ids.length > 0, `spawned ${ids.length} ${controller === 'fly' ? 'flies' : 'agents'}${ids.length ? `: ${ids.join(', ')}` : ''}`);
     }
   }
 }
@@ -398,28 +399,7 @@ function stepBody(state: WorldState, a: Agent, dt: number, rng: Rng) {
     }
   }
 
-  if (a.health <= 0) die(state, a);
-}
-
-/** The single death path: natural causes (health reached 0) or a God edit. */
-function die(state: WorldState, a: Agent) {
-  a.health = 0;
-  a.deathCause ??= a.poisonedUntil > state.time ? 'poison' : a.energy <= 0 ? 'starvation' : a.hydration <= 0 ? 'dehydration' : 'injury';
-  a.status = 'dead';
-  a.courting = null;
-  a.plan = [];
-  a.current = null;
-  a.target = null;
-  a.controller.needsDecision = false;
-  // Invalidate any decision still in flight for this agent.
-  a.controller.pending = false;
-  a.controller.requestSeq += 1;
-  if (a.fly) {
-    a.fly.speed = 0;
-    a.fly.feeding = false;
-  }
-  logEvent(state, { kind: 'death', agentId: a.id, ok: false, text: `✝ ${a.id} died of ${a.deathCause} at age ${ageOf(state, a).toFixed(0)}s (gen ${a.generation}, ${a.children.length} children)` });
-  milestone(state, a, `Died of ${a.deathCause} after ${(state.time - a.bornAt).toFixed(0)}s`);
+  if (a.health <= 0) killAgent(state, a);
 }
 
 function stepPlan(state: WorldState, a: Agent, dt: number, rng: Rng) {
@@ -493,6 +473,8 @@ export function stepWorld(state: WorldState, dt: number, rng: Rng = Math.random)
   }
   stepEcology(state, dt, rng);
   stepLife(state);
+  stepFlyEggs(state);
+  pruneFlySounds(state);
   for (const m of Object.values(state.marks)) if (m.expiresAt <= state.time) delete state.marks[m.id];
   if (state.deliveries.length && state.time - state.deliveries[0].at > 3) state.deliveries.shift();
   for (const a of Object.values(state.agents)) {

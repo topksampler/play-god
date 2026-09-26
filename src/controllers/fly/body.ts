@@ -7,6 +7,11 @@ export interface FlySensors {
   bitterContact: boolean;
   energy: number;
   ateThisTick: boolean;
+  /** Per eye [left, right]: strongest looming object's angular expansion rate (rad/s) and angular size (rad). */
+  loomRate?: [number, number];
+  loomSize?: [number, number];
+  /** Sound level at each antenna (0-1): nearby speech and buzzing. */
+  sound?: [number, number];
 }
 
 export interface FlyMotor {
@@ -22,7 +27,12 @@ export interface FlyMotor {
     steer: number;
     valence: number;
     brainDriven: number;
+    loom?: [number, number];
+    gf?: [number, number];
+    hearing?: number;
   };
+  /** A Giant Fiber spike this tick: the escape command. */
+  escape?: boolean;
 }
 
 export interface FlyTraits {
@@ -61,6 +71,17 @@ export const FLY_CONFIG = {
   exploreSigma: 1.2,
   exploreTauMs: 800,
   odorCalmHz: 30,
+  /** LC4 encode looming speed, LPLC2 looming size (von Reyn et al. 2017; Ache et al. 2019). */
+  maxLoomHz: 200,
+  loomMinRate: 0.35,
+  loomSatRate: 4,
+  /** LPLC2 need a large and fast-expanding edge: size above loomMinSize and expansion near loomFastRate. */
+  loomMinSize: 0.35,
+  loomSatSize: 1.0,
+  loomFastRate: 2,
+  maxAudHz: 150,
+  /** GF spikes in one 50 ms tick that count as the takeoff command. */
+  gfEscapeSpikes: 3,
 };
 
 function randn(): number {
@@ -71,7 +92,9 @@ export class FlyBody {
   static calibration: BiasCalibration | null = null;
   readonly slot: number;
   readonly traits: FlyTraits;
-  private rates = { a02L: 0, a02R: 0, a01L: 0, a01R: 0, mn9: 0, pam: 0, ppl1: 0 };
+  private rates = { a02L: 0, a02R: 0, a01L: 0, a01R: 0, mn9: 0, pam: 0, ppl1: 0, gfL: 0, gfR: 0 };
+  private loomHz: [number, number] = [0, 0];
+  private audHz = 0;
   private baseline = 0;
   private baselineReady = false;
   private explore = 0;
@@ -105,6 +128,25 @@ export class FlyBody {
     const bitterHz = s.bitterContact ? c.gustatoryHz : 0;
     this.pool.setInput(f, 'bitter_L', bitterHz);
     this.pool.setInput(f, 'bitter_R', bitterHz);
+    const inputs = this.pool.circuit.inputs;
+    if (inputs.lc4_L && inputs.lplc2_L) {
+      for (const [i, side] of [[0, 'L'], [1, 'R']] as const) {
+        const rate = s.loomRate?.[i] ?? 0;
+        const lc4 = c.maxLoomHz * Math.min(Math.max((rate - c.loomMinRate) / c.loomSatRate, 0), 1);
+        const size = Math.min(Math.max(((s.loomSize?.[i] ?? 0) - c.loomMinSize) / c.loomSatSize, 0), 1);
+        const lplc2 = rate > c.loomMinRate ? c.maxLoomHz * size * Math.min(rate / c.loomFastRate, 1) : 0;
+        this.loomHz[i] = lc4;
+        this.pool.setInput(f, `lc4_${side}`, lc4);
+        this.pool.setInput(f, `lplc2_${side}`, lplc2);
+      }
+    }
+    if (inputs.aud_L && inputs.aud_R) {
+      const aL = c.maxAudHz * Math.min(s.sound?.[0] ?? 0, 1);
+      const aR = c.maxAudHz * Math.min(s.sound?.[1] ?? 0, 1);
+      this.audHz = (aL + aR) / 2;
+      this.pool.setInput(f, 'aud_L', aL);
+      this.pool.setInput(f, 'aud_R', aR);
+    }
     if (s.ateThisTick) this.rewardLeftMs = c.rewardMs;
     this.pool.setInputNeurons(f, this.pool.circuit.mb.PAM, this.rewardLeftMs > 0 ? c.rewardHz : 0);
     this.rewardLeftMs = Math.max(0, this.rewardLeftMs - c.tickMs);
@@ -124,6 +166,13 @@ export class FlyBody {
     r.mn9 += a * (hz(o.MN9) - r.mn9);
     r.pam += a * (hz(pool.circuit.mb.PAM) - r.pam);
     r.ppl1 += a * (hz(pool.circuit.mb.PPL1) - r.ppl1);
+    let escape = false;
+    if (o.GF_L && o.GF_R) {
+      const gfSpikes = pool.groupSpikes(slot, o.GF_L) + pool.groupSpikes(slot, o.GF_R);
+      escape = gfSpikes >= c.gfEscapeSpikes;
+      r.gfL += a * (hz(o.GF_L) - r.gfL);
+      r.gfR += a * (hz(o.GF_R) - r.gfR);
+    }
 
     const cal = FlyBody.calibration;
     const intrinsic = cal ? interp(cal.A, this.meanHz.A) + interp(cal.B, this.meanHz.B) : 0;
@@ -149,7 +198,11 @@ export class FlyBody {
       turnRate,
       speed: feeding ? 0 : c.walkSpeed,
       feeding,
-      readout: { dna02: [r.a02L, r.a02R], dna01: [r.a01L, r.a01R], mn9: r.mn9, pam: r.pam, ppl1: r.ppl1, steer, valence, brainDriven },
+      readout: {
+        dna02: [r.a02L, r.a02R], dna01: [r.a01L, r.a01R], mn9: r.mn9, pam: r.pam, ppl1: r.ppl1, steer, valence, brainDriven,
+        loom: [this.loomHz[0], this.loomHz[1]], gf: [r.gfL, r.gfR], hearing: this.audHz,
+      },
+      escape,
     };
   }
 

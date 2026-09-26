@@ -105,7 +105,7 @@ export function observe(state: WorldState, agentId: string): Observation {
       radius: r1(o.halfLength ?? o.radius),
     })),
     visibleAgents: nearest(
-      Object.values(state.agents).filter((a) => a.id !== self.id),
+      Object.values(state.agents).filter((a) => a.id !== self.id && !a.fly),
       CONFIG.observeMaxOther,
     ).map((a) => {
       const doing = a.lastVisibleAct && a.lastVisibleAct.until > state.time ? a.lastVisibleAct.text
@@ -141,5 +141,35 @@ export function observe(state: WorldState, agentId: string): Observation {
     })),
     messages: self.inbox.map((m) => ({ ...m })),
     recentOutcomes: self.recentOutcomes.map(({ actionType, ok, detail }) => ({ actionType, ok, detail })),
+    ...(state.mode === 'mixed' ? flyPerception(state, self.id, self.position, radius) : {}),
+  };
+}
+
+/** Flies are small: they can be seen only fairly close. Their buzzing carries a little further. */
+const FLY_SIGHT = 7;
+
+function flyPerception(state: WorldState, selfId: string, at: Vec2, radius: number): Pick<Observation, 'visibleFlies' | 'heardBuzzing'> {
+  const sight = Math.min(radius, FLY_SIGHT);
+  const flies = Object.values(state.agents)
+    .filter((a) => a.fly && dist(a.position, at) <= sight)
+    .sort((a, b) => dist(a.position, at) - dist(b.position, at))
+    .slice(0, 8);
+  return {
+    visibleFlies: flies.map((a) => {
+      const f = a.fly!;
+      const doing = a.status === 'dead' ? 'dead' : f.flight ? 'flying' : f.feeding ? 'feeding' : f.speed > 0.05 ? 'walking' : 'still';
+      // Which way it faces relative to you (you can see that): "toward you", "away from you" or "sideways".
+      const toYou = Math.atan2(at.z - a.position.z, at.x - a.position.x);
+      const off = Math.abs(((toYou - a.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+      return {
+        id: a.id, position: pos(a.position), distance: r1(dist(a.position, at)), bearing: bearing(at, a.position), doing,
+        ...(a.status !== 'dead' && !f.flight ? { facing: off < 0.8 ? 'toward you' : off > 2.3 ? 'away from you' : 'sideways' } : {}),
+        ...(f.nibbling === selfId && a.status !== 'dead' ? { onYou: true } : {}),
+      };
+    }),
+    heardBuzzing: (state.flySounds ?? [])
+      .filter((s) => state.time - s.at <= 4 && dist(s.where, at) <= CONFIG.flyBuzzHearRadius)
+      .slice(-5)
+      .map((s) => ({ flyId: s.flyId, sound: s.text, distance: r1(dist(s.where, at)), bearing: bearing(at, s.where) })),
   };
 }

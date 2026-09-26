@@ -4,6 +4,7 @@ import type { WorkerIn, WorkerOut } from './worker';
 
 export interface SwarmStatus {
   workers: number;
+  neurons: number;
   flies: number;
   capacity: number;
   realtimeFactor: number;
@@ -27,6 +28,7 @@ export class FlySwarm {
   private dropped = 0;
   private lastError: string | null = null;
   private perWorker: number;
+  private neurons = 0;
 
   private constructor(perWorker: number) {
     this.perWorker = perWorker;
@@ -42,6 +44,7 @@ export class FlySwarm {
       }),
       fetch('/fly/calibration.json').then((r) => (r.ok ? (r.json() as Promise<BiasCalibration>) : null)).catch(() => null),
     ]);
+    swarm.neurons = circuit.n;
     await Promise.all(Array.from({ length: workers }, () => swarm.addShard(circuit, calibration)));
     return swarm;
   }
@@ -58,7 +61,12 @@ export class FlySwarm {
           shard.busy = false;
           shard.wallMs = msg.wallMs;
           if (msg.runId !== this.runId) return;
-          for (const { id, m } of msg.motors) if (shard.flies.has(id)) this.motors.set(id, m);
+          for (const { id, m } of msg.motors) {
+            if (!shard.flies.has(id)) continue;
+            // An escape command must not be lost if a newer motor arrives before the simulator reads it.
+            const prev = this.motors.get(id);
+            this.motors.set(id, prev?.escape && !m.escape ? { ...m, escape: true } : m);
+          }
         } else if (msg.type === 'error') {
           shard.busy = false;
           this.lastError = msg.error;
@@ -128,14 +136,19 @@ export class FlySwarm {
     }
   }
 
+  /** Latest motor command; an escape flag is delivered once. */
   motor(id: string): FlyMotor | null {
-    return this.motors.get(id) ?? null;
+    const m = this.motors.get(id);
+    if (!m) return null;
+    if (m.escape) this.motors.set(id, { ...m, escape: false });
+    return m;
   }
 
   status(): SwarmStatus {
     const busiest = Math.max(1, ...this.shards.filter((s) => s.flies.size).map((s) => s.wallMs));
     return {
       workers: this.shards.length,
+      neurons: this.neurons,
       flies: this.shardOf.size,
       capacity: this.shards.length * this.perWorker,
       realtimeFactor: 50 / busiest,

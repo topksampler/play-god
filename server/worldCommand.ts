@@ -24,7 +24,7 @@ const LlmEdit = z.object({
   durationSec: z.number().nullable(),
   timeOfDay: z.enum(['dawn', 'day', 'dusk', 'night']).nullable(),
   count: z.number().nullable(),
-  controller: z.enum(['llm', 'scripted']).nullable(),
+  controller: z.enum(['llm', 'scripted', 'fly']).nullable(),
 });
 const LlmOutput = z.object({ reply: z.string(), edits: z.array(LlmEdit) });
 type Edit = z.infer<typeof LlmEdit>;
@@ -45,7 +45,7 @@ Allowlisted edits (set unused fields to null):
 - add_hazard {hazardKind: ${HAZARD_KINDS.join('|')}, x, z, radius 0.5-6}. remove_hazard {targetId = hazard id}.
 - set_weather {weather: clear|cloudy|rain|storm, durationSec 10-600 or null}: natural weather resumes after durationSec (default ~1-2 min).
 - set_time_of_day {timeOfDay: dawn|day|dusk|night}: jumps the day/night cycle to that phase. Map everyday words: morning/noon/afternoon → day, evening/sunset → dusk, midnight → night, sunrise → dawn.
-- spawn_agents {count 1-${CONFIG.maxAgents}, controller: llm unless the operator asks for scripted}. In a fruit-fly world (snapshot.mode = "flies") this spawns flies whatever the controller.
+- spawn_agents {count 1-${CONFIG.maxAgents}, controller: llm unless the operator asks for scripted}. In a fruit-fly world (snapshot.mode = "flies") this spawns flies whatever the controller. In a mixed world (snapshot.mode = "mixed") agents and connectome fruit flies live together: controller fly spawns fruit flies, llm or scripted spawns agents (e.g. "2 agents and 3 flies" is two spawn_agents edits). In an agents-only world flies cannot be spawned.
 - kill_agent {targetId = creature id from agents.list}: strikes that living creature dead. For several creatures return one kill_agent per id; for "the weakest", "the selected" etc. pick ids from the snapshot.
 At most ${MAX_EDITS} edits per request. Anything else (teleporting, healing creatures, changing their minds, flying, speed of time...) is unsupported: return no edits and reply briefly with what you can do instead.
 Never describe a change in the reply unless the matching edit is in "edits": if you return no edits, nothing changes.

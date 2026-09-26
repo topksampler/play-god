@@ -38,8 +38,12 @@ export function blocked(state: WorldState, p: Vec2, radius: number = CONFIG.agen
   for (const o of Object.values(state.obstacles)) {
     if (o.solid && obstacleDistance(o, p) < radius) return true;
   }
+  // Flies are too small to block plan agents; agents block flies, and flies block each other.
+  const moverIsFly = Boolean(ignoreAgentId && state.agents[ignoreAgentId]?.fly);
   for (const a of Object.values(state.agents)) {
     if (a.id === ignoreAgentId || a.status === 'dead') continue;
+    if (a.fly && !moverIsFly && ignoreAgentId !== undefined) continue;
+    if (a.fly && a.fly.flight) continue;
     if (dist(p, a.position) < radius + CONFIG.agentRadius) return true;
   }
   return false;

@@ -19,13 +19,14 @@ b = Brain()
 W = sp.load_npz(os.path.join(DATA, "w783_fixed.npz"))
 A = ann.set_index("root_id").reindex(b.ids)
 A["cell_type"] = A.cell_type.fillna("")
+AUDITORY = (A.cell_sub_class == "auditory").values & A.cell_type.str.match(r"JO-[AB]").values
 
 ODOR_A = ["DM1", "DM4", "DP1m", "VA2", "DM2", "VM2"]
 ODOR_B = ["DA3", "DC1", "DL1", "VA6", "VM3"]
 
 
-def grp(side=None, **kw):
-    m = np.ones(len(A), bool)
+def grp(side=None, mask=None, **kw):
+    m = np.ones(len(A), bool) if mask is None else mask.copy()
     for k, v in kw.items():
         m &= A[k].isin(v if isinstance(v, list) else [v]).values
     if side:
@@ -42,12 +43,18 @@ INPUTS = {
     "sugar_R": grp("right", cell_sub_class="sugar/water"),
     "bitter_L": grp("left", cell_sub_class="bitter"),
     "bitter_R": grp("right", cell_sub_class="bitter"),
+    # Looming detectors of each optic lobe (von Reyn et al. 2017; Ache et al. 2019) and Johnston's organ auditory neurons.
+    "lc4_L": grp("left", cell_type="LC4"), "lc4_R": grp("right", cell_type="LC4"),
+    "lplc2_L": grp("left", cell_type="LPLC2"), "lplc2_R": grp("right", cell_type="LPLC2"),
+    "aud_L": grp("left", mask=AUDITORY), "aud_R": grp("right", mask=AUDITORY),
 }
 OUTPUTS = {
     "DNa02_L": grp("left", cell_type="DNa02"), "DNa02_R": grp("right", cell_type="DNa02"),
     "DNa01_L": grp("left", cell_type="DNa01"), "DNa01_R": grp("right", cell_type="DNa01"),
     "DNp09_L": grp("left", cell_type="DNp09"), "DNp09_R": grp("right", cell_type="DNp09"),
     "MN9": grp(None, cell_type="CB0701"),
+    # Giant Fiber descending neurons: a spike commands the escape takeoff (von Reyn et al. 2014).
+    "GF_L": grp("left", cell_type="DNp01"), "GF_R": grp("right", cell_type="DNp01"),
 }
 MB = {
     "PAM": grp(None, cell_class="DAN", cell_type=[t for t in A.cell_type.unique() if t.startswith("PAM")]),
@@ -63,6 +70,13 @@ for r in (40.0, 150.0):
 CONDITIONS += [{"odorA_L": 150.0, "odorA_R": 150.0}, {"odorB_L": 150.0, "odorB_R": 150.0},
                {"sugar_L": 150.0, "sugar_R": 150.0}, {"bitter_L": 150.0, "bitter_R": 150.0},
                {"odorA_L": 150.0, "odorA_R": 60.0}, {"odorA_L": 60.0, "odorA_R": 150.0}]
+for r in (30.0, 80.0, 200.0):
+    for s in ("L", "R"):
+        CONDITIONS.append({f"lc4_{s}": r, f"lplc2_{s}": r})
+CONDITIONS += [{"lc4_L": 200.0, "lplc2_L": 200.0, "lc4_R": 200.0, "lplc2_R": 200.0},
+               {"aud_L": 60.0, "aud_R": 60.0}, {"aud_L": 150.0, "aud_R": 150.0}, {"aud_L": 150.0}, {"aud_R": 150.0},
+               {"lc4_L": 200.0, "lplc2_L": 200.0, "odorA_L": 150.0, "odorA_R": 150.0},
+               {"aud_L": 150.0, "aud_R": 150.0, "odorA_L": 150.0, "odorA_R": 150.0}]
 
 if __name__ == "__main__":
     active = np.zeros(b.n, bool)

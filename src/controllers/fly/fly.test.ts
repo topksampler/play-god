@@ -128,6 +128,36 @@ describe('individual flies', () => {
     expect(feeding).toBe(false);
   });
 
+  it('escape: looming on LC4/LPLC2 fires its own Giant Fiber (DNp01) and commands takeoff; no looming, no takeoff', () => {
+    for (const k of ['GF_L', 'GF_R']) expect(o[k]).toHaveLength(1);
+    for (const k of ['lc4_L', 'lc4_R', 'lplc2_L', 'lplc2_R', 'aud_L', 'aud_R']) expect(circuit.inputs[k].length).toBeGreaterThan(30);
+    const pool = new FlyBrainPool(circuit, 2, 1.0);
+    const calm = new FlyBody(pool, 61);
+    const threatened = new FlyBody(pool, 62);
+    let calmEscapes = 0;
+    let firstEscape = -1;
+    for (let t = 0; t < 40; t++) {
+      calm.encode({ ...quiet, odorA: [0.6, 0.6] });
+      threatened.encode({ ...quiet, loomRate: t >= 20 ? [3, 3] : [0, 0], loomSize: t >= 20 ? [1, 1] : [0, 0] });
+      pool.clearCounts();
+      pool.run(50);
+      if (calm.decode().escape) calmEscapes++;
+      if (threatened.decode().escape && firstEscape < 0) firstEscape = t;
+    }
+    expect(calmEscapes).toBe(0);
+    expect(firstEscape).toBeGreaterThanOrEqual(20);
+    expect(firstEscape).toBeLessThan(24);
+  });
+
+  it('looming on one eye excites the Giant Fiber on that side more (ipsilateral)', () => {
+    const pool = new FlyBrainPool(circuit, 1, 1.0);
+    const f = pool.spawn(71);
+    pool.setInput(f, 'lc4_L', 120);
+    pool.setInput(f, 'lplc2_L', 120);
+    run(pool, 300);
+    expect(pool.groupSpikes(f, o.GF_L)).toBeGreaterThan(pool.groupSpikes(f, o.GF_R));
+  });
+
   it('kills and respawns slots cleanly', () => {
     const pool = new FlyBrainPool(circuit, 1, 1.0);
     const f = pool.spawn(51);
