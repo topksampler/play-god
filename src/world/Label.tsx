@@ -52,7 +52,7 @@ export function Label({
   const height = 0.32 * lines.length + 0.1;
   return (
     <sprite position={position} scale={[height * aspect, height, 1]} renderOrder={10}>
-      <spriteMaterial map={texture} depthTest={false} transparent />
+      <spriteMaterial map={texture} depthTest={false} transparent fog={false} />
     </sprite>
   );
 }

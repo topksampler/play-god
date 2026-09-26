@@ -2,9 +2,10 @@ import { useMemo } from 'react';
 import { BufferGeometry, Float32BufferAttribute } from 'three';
 import type { WorldState } from '../shared/types';
 import { Label } from './Label';
+import type { TerrainModel } from './terrain-model';
 
 /** Lines from speaker to actual hearers for ~3s after a delivery. Never drawn for communication that did not happen. */
-function DeliveryLines({ world }: { world: WorldState }) {
+function DeliveryLines({ world, terrain }: { world: WorldState; terrain: TerrainModel }) {
   const geo = useMemo(() => new BufferGeometry(), []);
   const pts: number[] = [];
   for (const d of world.deliveries) {
@@ -12,7 +13,11 @@ function DeliveryLines({ world }: { world: WorldState }) {
     if (!from || world.time - d.at > 3) continue;
     for (const id of d.to) {
       const to = world.agents[id];
-      if (to) pts.push(from.position.x, 1.3, from.position.z, to.position.x, 1.3, to.position.z);
+      if (to)
+        pts.push(
+          from.position.x, terrain.surface(from.position.x, from.position.z) + 1.3, from.position.z,
+          to.position.x, terrain.surface(to.position.x, to.position.z) + 1.3, to.position.z,
+        );
     }
   }
   geo.setAttribute('position', new Float32BufferAttribute(pts, 3));
@@ -23,7 +28,8 @@ function DeliveryLines({ world }: { world: WorldState }) {
   );
 }
 
-export function CommsLayer({ world }: { world: WorldState }) {
+export function CommsLayer({ world, terrain }: { world: WorldState; terrain: TerrainModel }) {
+  const y = (p: { x: number; z: number }) => terrain.surface(p.x, p.z);
   const recent = new Map<string, { content: string; channel: string }>();
   for (let i = world.utterances.length - 1; i >= 0; i--) {
     const u = world.utterances[i];
@@ -32,19 +38,19 @@ export function CommsLayer({ world }: { world: WorldState }) {
   }
   return (
     <>
-      <DeliveryLines world={world} />
+      <DeliveryLines world={world} terrain={terrain} />
       {[...recent.entries()].map(([id, u]) => {
         const a = world.agents[id];
         if (!a) return null;
         const text = u.channel === 'signal' ? `🔊 ${u.content}` : `💬 ${u.content.length > 60 ? u.content.slice(0, 57) + '…' : u.content}`;
-        return <Label key={id} position={[a.position.x, 3.1, a.position.z]} bg="rgba(255,255,255,0.95)" outline="#1baf7a" lines={[text]} dark />;
+        return <Label key={id} position={[a.position.x, y(a.position) + 3.1, a.position.z]} bg="rgba(255,255,255,0.95)" outline="#1baf7a" lines={[text]} dark />;
       })}
       {Object.values(world.agents).map((a) => {
         const g = a.gesture;
         if (!g || g.until <= world.time) return null;
         const ang = g.toward ? Math.atan2(g.toward.z - a.position.z, g.toward.x - a.position.x) : a.heading;
         return (
-          <group key={a.id} position={[a.position.x, 0, a.position.z]}>
+          <group key={a.id} position={[a.position.x, y(a.position), a.position.z]}>
             {g.kind === 'point' && (
               <group rotation={[0, -ang, 0]}>
                 <mesh position={[1.1, 1.1, 0]} rotation={[0, 0, -Math.PI / 2]}>
@@ -62,7 +68,7 @@ export function CommsLayer({ world }: { world: WorldState }) {
         );
       })}
       {Object.values(world.marks).map((m) => (
-        <group key={m.id} position={[m.position.x, 0.02, m.position.z]}>
+        <group key={m.id} position={[m.position.x, y(m.position) + 0.05, m.position.z]}>
           <mesh rotation={[-Math.PI / 2, 0, 0]}>
             <ringGeometry args={[0.35, 0.5, 6]} />
             <meshBasicMaterial color="#3a2f25" transparent opacity={Math.max(0.2, 1 - (world.time - m.at) / 240)} />

@@ -4,7 +4,7 @@ import type { Group } from 'three';
 import type { Agent, ItemKind } from '../shared/types';
 import { useSim } from '../sim/react';
 
-const ITEM_COLOR: Partial<Record<ItemKind, string>> = {
+export const ITEM_COLOR: Partial<Record<ItemKind, string>> = {
   berries: '#2b3fbf', fruit: '#ff8c1a', mushroom: '#8d6e63', toxic_mushroom: '#d62828', cooked_mushroom: '#a0522d', fish: '#c9d3dd',
   cooked_fish: '#d99a5b', cactus_fruit: '#e0457b', honey: '#f2b705', herb: '#aebfb2', moss: '#a4d36a', wood: '#8b5a2b',
   stone: '#9e9e9e', fiber: '#c2b35a', rotten_food: '#556b2f',
