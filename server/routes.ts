@@ -3,8 +3,9 @@
  * Netlify Function (netlify/functions/api.ts). Credentials stay server-side.
  */
 import Anthropic from '@anthropic-ai/sdk';
-import { DecideRequestSchema, type HealthResponse, WorldCommandRequestSchema } from '../src/shared/schemas';
+import { DecideRequestSchema, type HealthResponse, ObserveRequestSchema, WorldCommandRequestSchema } from '../src/shared/schemas';
 import { credentialSource, decide, modelFor } from './anthropic';
+import { observe } from './observe';
 import { interpretWorldCommand } from './worldCommand';
 
 export type ApiResult = { status: number; body: unknown };
@@ -23,6 +24,7 @@ const LOCKED: ApiResult = { status: 401, body: { error: 'access code required: e
 const MAX_CONCURRENT = 4;
 let active = 0;
 let commandActive = 0;
+let observeActive = false;
 
 const apiError = (e: unknown) => (e instanceof Anthropic.APIError ? `API ${e.message}`.slice(0, 300) : (e as Error).message);
 
@@ -43,6 +45,9 @@ export async function decideRoute(body: unknown, headers: Headers): Promise<ApiR
   if (!unlocked(headers)) return LOCKED;
   const parsed = DecideRequestSchema.safeParse(body);
   if (!parsed.success) return { status: 400, body: { error: 'invalid decide request' } };
+  // God first: while a God command or observer call runs, hold new creature decisions briefly (creatures keep
+  // executing their current plans), so the human's request is not stuck behind a queue of agent calls.
+  for (const t0 = Date.now(); (commandActive > 0 || observeActive) && Date.now() - t0 < 8000; ) await new Promise((r) => setTimeout(r, 200));
   if (active >= MAX_CONCURRENT) return { status: 429, body: { error: 'server busy' } };
   active++;
   const t0 = Date.now();
@@ -84,5 +89,26 @@ export async function worldCommandRoute(body: unknown, headers: Headers): Promis
     return { status: 502, body: { error: apiError(e) } };
   } finally {
     commandActive--;
+  }
+}
+
+// Observer agent: reads recorded moments and earlier-run summaries, returns grounded insights.
+export async function observeRoute(body: unknown, headers: Headers): Promise<ApiResult> {
+  if (!credentialSource()) return { status: 503, body: { error: 'LLM not configured: set ANTHROPIC_API_KEY on the server to enable the observer' } };
+  if (!unlocked(headers)) return LOCKED;
+  const parsed = ObserveRequestSchema.safeParse(body);
+  if (!parsed.success) return { status: 400, body: { error: `invalid observe request: ${parsed.error.issues[0]?.message ?? 'bad request'}` } };
+  if (observeActive) return { status: 429, body: { error: 'observer busy' } };
+  observeActive = true;
+  const t0 = Date.now();
+  try {
+    const result = await observe(parsed.data);
+    console.log(`[observe] ${result.model} → ${result.insights.length} insight(s)${result.suggestion ? ' + suggestion' : ''} (${Date.now() - t0}ms)`);
+    return { status: 200, body: result };
+  } catch (e) {
+    console.warn(`[observe] error: ${apiError(e)}`);
+    return { status: 502, body: { error: apiError(e) } };
+  } finally {
+    observeActive = false;
   }
 }

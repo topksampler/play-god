@@ -3,9 +3,9 @@
  * local Express server. Set ANTHROPIC_API_KEY (and optionally ANTHROPIC_WORKSPACE_ID, ANTHROPIC_AGENT_MODEL,
  * ANTHROPIC_SMART_MODEL, PLAY_GOD_ACCESS_CODE, ENABLE_FLY_MODE) in the Netlify site's environment variables.
  */
-import { type ApiResult, decideRoute, health, worldCommandRoute } from '../../server/routes';
+import { type ApiResult, decideRoute, health, observeRoute, worldCommandRoute } from '../../server/routes';
 
-const MAX_BODY = 64 * 1024;
+const MAX_BODY = 256 * 1024; // the observer sends several runs of recorded moments
 const json = (r: ApiResult) => new Response(JSON.stringify(r.body), { status: r.status, headers: { 'content-type': 'application/json' } });
 
 async function readJson(req: Request): Promise<unknown | ApiResult> {
@@ -27,7 +27,8 @@ export default async (req: Request): Promise<Response> => {
   if (isResult(body)) return json(body);
   if (path === '/api/decide') return json(await decideRoute(body, req.headers));
   if (path === '/api/world-command') return json(await worldCommandRoute(body, req.headers));
+  if (path === '/api/observe') return json(await observeRoute(body, req.headers));
   return json({ status: 404, body: { error: 'not found' } });
 };
 
-export const config = { path: ['/api/health', '/api/decide', '/api/world-command'] };
+export const config = { path: ['/api/health', '/api/decide', '/api/world-command', '/api/observe'] };

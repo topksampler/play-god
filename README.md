@@ -21,6 +21,20 @@ Toggle **LLM agents / Agents + flies / Fruit flies** at the top of the side pane
   - Brains run in Web Workers. When they cannot keep up, the world slows down (shown in the HUD) so no fly acts on stale motor commands.
   - Full details, the validation, and exactly which parts are body-level rules rather than neural: [docs/FLY.md](docs/FLY.md). No API key needed.
 
+## The God panel (right side)
+
+God does two things, so the panel shows two things:
+
+- **👁 What's happening (watch):**
+  - A one-line pulse of the world.
+  - The **Observer**, an AI naturalist on the smart tier (`/api/observe`, `server/observe.ts`). It reads the recorded moments of this run plus summaries of earlier runs in this browser (`src/sim/chronicle.ts`, localStorage). It returns 1–3 insights (pattern / comparison with earlier runs / open question) and optionally a suggested experiment you can run with one click. Every insight must cite recorded moments (unknown ids are dropped), and it is labelled as interpretation, not proof. It runs about every 45 sim-seconds when enough has happened, or on "What's interesting?".
+  - **Moments**, extracted from the simulation record (`src/sim/moments.ts`, no AI): deaths, births, courtships, poisonings, delivered speech, belief changes scored against world truth, notable firsts, gatherings, your interventions. **⏪ Watch** on any moment or insight jumps the replay to just before it, follows the creature and plays.
+  - A compact card for the selected creature.
+- **⚡ Intervene (change):** one-tap miracles (rain, storm, clear, night/dawn, food drop, temptation, danger, +3 creatures) and the natural-language console below.
+- **⚙ Advanced** opens the full original panel: speed, models, Lab, charts, raw events, full dossier, fly mode.
+
+The timeline has a **story** lane of those moments (tap to watch) above the per-agent swimlanes.
+
 ## God mode
 
 - **Natural language (LLM):** commands such as "put fruit trees in the northeast corner", "storm for 2 minutes" or "make it night", and questions such as "how is everyone doing?".

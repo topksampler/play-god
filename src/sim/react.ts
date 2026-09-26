@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import type { WorldState } from '../shared/types';
+import type { Chronicle } from './chronicle';
 import type { Replay } from './replay';
 import type { SimStore } from './store';
 
@@ -37,4 +38,14 @@ export function useReplay(): Replay {
   if (!r) throw new Error('ReplayContext missing');
   useSyncExternalStore(r.subscribe, () => `${r.getViewTime()}|${r.isPlaying()}|${r.getRate()}|${Math.floor(r.range().start)}|${Math.floor(r.range().end)}`);
   return r;
+}
+
+export const ChronicleContext = createContext<Chronicle | null>(null);
+
+/** Recorded moments, observer notes and run summaries; re-renders when they change. */
+export function useChronicle(): Chronicle {
+  const c = useContext(ChronicleContext);
+  if (!c) throw new Error('ChronicleContext missing');
+  useSyncExternalStore(c.subscribe, c.version);
+  return c;
 }

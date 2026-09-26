@@ -62,87 +62,99 @@ const subscribe = (fn: () => void) => {
 };
 
 /**
- * Natural-language God mode (LLM on the server). Commands become allowlisted edits that the simulator validates and
- * applies; questions are answered from a snapshot of actual world state.
+ * Sends a natural-language God request (also used by observer suggestions). Commands become allowlisted edits that
+ * the simulator validates and applies to the live world; questions are answered from a snapshot of the live world.
  */
-export function GodCommand({ store, selectedId, llm }: { store: SimStore; selectedId: string | null; llm: boolean }) {
+export async function sendGodCommand(store: SimStore, text: string, selectedId: string | null): Promise<void> {
+  const t = text.trim();
+  if (!t || history.some((x) => x.pending)) return;
+  const n = ++counter;
+  setHistory((l) => [{ n, text: t, pending: true }, ...l]);
+  const update = (patch: Partial<Exchange>) => setHistory((l) => l.map((x) => (x.n === n ? { ...x, ...patch } : x)));
+  try {
+    const request = async () => {
+      const res = await fetch('/api/world-command', {
+        method: 'POST',
+        headers: apiHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ text: t, world: worldStatus(store.getLiveState(), selectedId) }),
+        signal: AbortSignal.timeout(45000),
+      });
+      return { res, body: await res.json().catch(() => ({})) };
+    };
+    let { res, body } = await request();
+    // A 5xx with no JSON error comes from the dev proxy (API server restarting), not the model. Nothing was applied, so retry once.
+    if (res.status >= 500 && !body.error) {
+      await new Promise((r) => setTimeout(r, 2000));
+      ({ res, body } = await request());
+    }
+    if (!res.ok) throw new Error(body.error ?? (res.status >= 500 ? `API server unreachable (HTTP ${res.status}) — is \`npm run dev\` running? Nothing was changed.` : `HTTP ${res.status}`));
+    const out = body as WorldCommandResponse;
+    const source = `God #${n} "${t.slice(0, 30)}"`;
+    const before = store.getLiveState().eventSeq;
+    for (const edit of out.edits) store.dispatch({ type: 'edit', edit, source });
+    update({ pending: false, reply: out.reply, model: out.model, edits: out.edits, rejected: out.rejected });
+    if (out.edits.length) {
+      // Edits apply at the next simulation boundary; read their logged outcomes back.
+      setTimeout(() => {
+        const outcomes = store.getLiveState().events
+          .filter((e) => e.seq > before && e.text.startsWith(`[${source}]`))
+          .map((e) => ({ ok: e.ok, text: e.text.replace(`[${source}] `, '') }));
+        update({ outcomes });
+      }, 300);
+    }
+  } catch (e) {
+    update({ pending: false, error: (e as Error).message });
+  }
+}
+
+function ExchangeView({ x }: { x: Exchange }) {
+  return (
+    <div className="god-exchange">
+      <div className="god-you">{x.text}</div>
+      {x.pending && <div className="small">interpreting…</div>}
+      {x.error && <div className="err small">{x.error}</div>}
+      {x.reply && <div className="god-reply">{x.reply}</div>}
+      {x.edits?.length === 0 && x.reply && <div className="small">no world changes</div>}
+      {x.outcomes
+        ? x.outcomes.map((o, i) => <div key={`o${i}`} className={o.ok ? 'god-ok' : 'god-bad'}>{o.ok ? '✓' : '✗'} {o.text}</div>)
+        : x.edits?.map((e, i) => <div key={i} className="small">→ {describe(e)}</div>)}
+      {x.rejected?.map((r, i) => <div key={`r${i}`} className="god-bad">✗ not applied: {r}</div>)}
+    </div>
+  );
+}
+
+/** Natural-language God input. `compact` shows only the latest exchange, with the rest behind a toggle. */
+export function GodCommand({ store, selectedId, llm, compact = false }: { store: SimStore; selectedId: string | null; llm: boolean; compact?: boolean }) {
   const [text, setText] = useState('');
+  const [all, setAll] = useState(!compact);
   const log = useSyncExternalStore(subscribe, () => history);
   const busy = log.some((x) => x.pending);
-  const update = (n: number, patch: Partial<Exchange>) => setHistory((l) => l.map((x) => (x.n === n ? { ...x, ...patch } : x)));
-
-  const submit = async () => {
-    const t = text.trim();
-    if (!t || busy) return;
-    const n = ++counter;
+  const submit = () => {
+    if (!text.trim() || busy) return;
+    void sendGodCommand(store, text, selectedId);
     setText('');
-    setHistory((l) => [{ n, text: t, pending: true }, ...l]);
-    try {
-      const request = async () => {
-        const res = await fetch('/api/world-command', {
-          method: 'POST',
-          headers: apiHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ text: t, world: worldStatus(store.getLiveState(), selectedId) }),
-          signal: AbortSignal.timeout(25000),
-        });
-        return { res, body: await res.json().catch(() => ({})) };
-      };
-      let { res, body } = await request();
-      // A 5xx with no JSON error comes from the dev proxy (API server restarting), not the model. Nothing was applied, so retry once.
-      if (res.status >= 500 && !body.error) {
-        await new Promise((r) => setTimeout(r, 2000));
-        ({ res, body } = await request());
-      }
-      if (!res.ok) throw new Error(body.error ?? (res.status >= 500 ? `API server unreachable (HTTP ${res.status}) — is \`npm run dev\` running? Nothing was changed.` : `HTTP ${res.status}`));
-      const out = body as WorldCommandResponse;
-      const source = `God #${n} "${t.slice(0, 30)}"`;
-      const before = store.getLiveState().eventSeq;
-      for (const edit of out.edits) store.dispatch({ type: 'edit', edit, source });
-      update(n, { pending: false, reply: out.reply, model: out.model, edits: out.edits, rejected: out.rejected });
-      if (out.edits.length) {
-        // Edits apply at the next simulation boundary; read their logged outcomes back.
-        setTimeout(() => {
-          const outcomes = store.getLiveState().events
-            .filter((e) => e.seq > before && e.text.startsWith(`[${source}]`))
-            .map((e) => ({ ok: e.ok, text: e.text.replace(`[${source}] `, '') }));
-          update(n, { outcomes });
-        }, 300);
-      }
-    } catch (e) {
-      update(n, { pending: false, error: (e as Error).message });
-    }
   };
+  const shown = all ? log : log.slice(0, 1);
 
   return (
     <div className="god">
-      <div className="row">
+      <div className="god-input-row">
         <input
           value={text}
           maxLength={500}
-          placeholder={llm ? 'e.g. "storm for 2 minutes" · "make it night" · "how is everyone doing?"' : 'needs ANTHROPIC_API_KEY on the server'}
+          placeholder={llm ? 'Ask the world, or command it…' : 'needs ANTHROPIC_API_KEY on the server'}
           disabled={!llm || busy}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
         />
-        <button disabled={!llm || busy || !text.trim()} onClick={submit}>
-          {busy ? '…' : 'Send'}
+        <button className="god-send" disabled={!llm || busy || !text.trim()} onClick={submit} aria-label="Send">
+          {busy ? '…' : '➤'}
         </button>
       </div>
-      <div className="small">
-        Can change: weather (+duration), time of day, add/remove resources and hazards, add obstacles, spawn or strike down creatures. Can answer questions about the current world.
-      </div>
-      {log.map((x) => (
-        <div key={x.n} className="god-exchange kv">
-          <div><b>you:</b> {x.text}</div>
-          {x.pending && <div className="small">interpreting…</div>}
-          {x.error && <div className="err">error: {x.error}</div>}
-          {x.reply && <div><b>world</b> <span className="small">({x.model})</span>: {x.reply}</div>}
-          {x.edits?.length === 0 && <div className="small">(no world changes applied)</div>}
-          {x.edits?.map((e, i) => <div key={i} className="small">→ {describe(e)}</div>)}
-          {x.outcomes?.map((o, i) => <div key={`o${i}`} className={o.ok ? 'small' : 'small err'}>{o.ok ? '✓' : '✗'} {o.text}</div>)}
-          {x.rejected?.map((r, i) => <div key={`r${i}`} className="small err">✗ not applied: {r}</div>)}
-        </div>
-      ))}
+      {shown.map((x) => <ExchangeView key={x.n} x={x} />)}
+      {compact && log.length > 1 && (
+        <button className="link-btn" onClick={() => setAll((v) => !v)}>{all ? 'hide history' : `history (${log.length - 1} more)`}</button>
+      )}
     </div>
   );
 }

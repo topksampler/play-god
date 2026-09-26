@@ -84,6 +84,21 @@ export const WorldCommandRequestSchema = z.object({
 export type WorldCommandRequest = z.infer<typeof WorldCommandRequestSchema>;
 export type WorldCommandResponse = { edits: WorldEdit[]; rejected: string[]; reply: string; model: string };
 
+/** Observer agent: recorded moments + run summaries in, grounded insights out. */
+export const ObserveRequestSchema = z
+  .object({
+    current: z.record(z.string(), z.unknown()),
+    moments: z.array(z.object({ id: z.string().min(1).max(120), at: finite, kind: z.string().max(20), agents: z.array(id).max(16), title: z.string().max(220) })).max(220),
+    previous: z.array(z.record(z.string(), z.unknown())).max(6),
+  })
+  .refine((r) => JSON.stringify(r).length < 120000, 'observe request too large');
+export type ObserveRequest = z.infer<typeof ObserveRequestSchema>;
+export type ObserveResponse = {
+  insights: { kind: 'pattern' | 'comparison' | 'question'; headline: string; detail: string; momentIds: string[] }[];
+  suggestion: { command: string; why: string } | null;
+  model: string;
+};
+
 export type DecideRequest = z.infer<typeof DecideRequestSchema>;
 export type HealthResponse = {
   llmConfigured: boolean;

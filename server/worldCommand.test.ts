@@ -31,3 +31,25 @@ describe('toEdits (model output → allowlisted edits)', () => {
     expect(rejected.at(-1)).toMatch(/4 edit\(s\) over the limit/);
   });
 });
+
+import { sanitizeObservation } from './observe';
+
+describe('sanitizeObservation (observer output → grounded insights)', () => {
+  it('drops unknown moment ids and ungrounded patterns, bounds text', () => {
+    const out = sanitizeObservation(
+      {
+        insights: [
+          { kind: 'pattern', headline: 'a3 warned a5', detail: 'x'.repeat(1000), momentIds: ['m1', 'm99'] },
+          { kind: 'pattern', headline: 'invented', detail: 'no evidence', momentIds: ['m42'] },
+          { kind: 'comparison', headline: 'more births than last run', detail: 'd', momentIds: [] },
+        ],
+        suggestion: { command: 'add red toxic mushrooms near a5', why: 'tests the warning' },
+      },
+      new Set(['m1', 'm2']),
+    );
+    expect(out.insights.map((i) => i.headline)).toEqual(['a3 warned a5', 'more births than last run']);
+    expect(out.insights[0].momentIds).toEqual(['m1']);
+    expect(out.insights[0].detail.length).toBeLessThanOrEqual(320);
+    expect(out.suggestion?.command).toBe('add red toxic mushrooms near a5');
+  });
+});

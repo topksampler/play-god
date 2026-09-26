@@ -4,7 +4,15 @@ import { HAZARDS } from '../src/shared/catalog';
 import { CONFIG } from '../src/shared/config';
 import { NODE_KINDS, type WorldCommandRequest, type WorldCommandResponse, WorldEditSchema } from '../src/shared/schemas';
 import type { WorldEdit } from '../src/shared/types';
-import { getClient, modelFor } from './anthropic';
+import Anthropic from '@anthropic-ai/sdk';
+import { modelFor } from './anthropic';
+
+let client: Anthropic | null = null;
+// Own client with a longer timeout than agent turns: a God command must not fail just because the API is busy.
+const getClient = () => {
+  const workspace = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+  return (client ??= new Anthropic({ timeout: 40000, maxRetries: 1, ...(workspace ? { defaultHeaders: { 'anthropic-workspace-id': workspace } } : {}) }));
+};
 
 const MAX_EDITS = 10;
 const EDIT_TYPES = ['add_resource', 'remove_resource', 'add_obstacle', 'add_hazard', 'remove_hazard', 'set_weather', 'set_time_of_day', 'spawn_agents', 'kill_agent'] as const;

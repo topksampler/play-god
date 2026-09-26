@@ -33,8 +33,8 @@ const ZENITH_SUNSET = C('#3b4f94');
 const HORIZON_SUNSET = C('#f7a667');
 const ZENITH_NIGHT = C('#0b1430');
 const HORIZON_NIGHT = C('#2a3a66');
-const OVERCAST_ZENITH = C('#7c8793');
-const OVERCAST_HORIZON = C('#b3bac1');
+const OVERCAST_ZENITH = C('#8f9aa7');
+const OVERCAST_HORIZON = C('#cbd2d8');
 const STORM_ZENITH = C('#58616d');
 const STORM_HORIZON = C('#8a939d');
 const SUN_LOW = C('#ff9146');
@@ -44,8 +44,8 @@ const MOON = C('#9fb6ff');
 /** Dev-only render offset for screenshots (never touches sim time). */
 export const DEBUG_VIEW = { timeOffset: 0 };
 
-const OVERCAST: Record<Weather, number> = { clear: 0, cloudy: 0.55, rain: 0.8, storm: 1 };
-const FOG: Record<Weather, number> = { clear: 0.0031, cloudy: 0.0042, rain: 0.006, storm: 0.0085 };
+const OVERCAST: Record<Weather, number> = { clear: 0, cloudy: 0.45, rain: 0.6, storm: 1 };
+const FOG: Record<Weather, number> = { clear: 0.0031, cloudy: 0.0036, rain: 0.0045, storm: 0.0085 };
 const WIND: Record<Weather, number> = { clear: 0.7, cloudy: 1, rain: 1.6, storm: 2.6 };
 const CLOUDS: Record<Weather, number> = { clear: 9, cloudy: 26, rain: 34, storm: 40 };
 
@@ -410,7 +410,7 @@ export function Atmosphere() {
     const f = flash.value;
     if (sun.current) {
       const L = sun.current;
-      const sunI = 2.9 * smoothstep(-0.02, 0.22, el) * (1 - oc * 0.5);
+      const sunI = 2.9 * smoothstep(-0.02, 0.22, el) * (1 - oc * 0.35);
       const moonI = 1.5 * night * (1 - oc * 0.4);
       if (sunI >= moonI) {
         L.position.copy(dir).multiplyScalar(110);
@@ -426,7 +426,7 @@ export function Atmosphere() {
     if (hemi.current) {
       hemi.current.color.copy(tmp.z).lerp(tmp.h, 0.5).lerp(C('#ffffff'), 0.2 * day).lerp(C('#5a6fa8'), night * 0.7);
       hemi.current.groundColor.copy(hemiGround).multiplyScalar(0.55 + 0.45 * day);
-      hemi.current.intensity = 0.55 + 0.75 * day + f * 2.5 + night * 0.9 + oc * 0.6;
+      hemi.current.intensity = 0.55 + 0.75 * day + f * 2.5 + night * 0.9 + oc * 0.95 * (0.4 + 0.6 * day);
     }
   });
 
